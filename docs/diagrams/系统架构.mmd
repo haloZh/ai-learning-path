@@ -1,0 +1,51 @@
+---
+title: 系统整体架构（L-2 个性化学习路径系统）
+---
+%%{init: {'flowchart': {'curve': 'basis', 'nodeSpacing': 60, 'rankSpacing': 70}}}%%
+flowchart TD
+
+    User(["👤 学生用户"])
+    User --> FE
+    FE["🖥️ 前端层 · Vue 3 + Vite<br/>画像录入 ｜ 诊断测验 ｜ 路径视图 ｜ 学习工作台"]
+    FE -->|REST| API
+    API["🔌 API 网关 · FastAPI<br/>/profile ｜ /diagnose ｜ /path ｜ /interaction"]
+    API --> AGENT
+
+    subgraph AGENT["🤖 多智能体编排（LangGraph）"]
+        direction LR
+        A1["🩺 诊断 Agent<br/>量化掌握度"]
+        A2["🗺️ 规划 Agent<br/>路径生成"]
+        A3["🔧 优化 Agent<br/>动态调整"]
+        A1 -->|状态向量| A2
+        A2 -->|路径 JSON| A3
+        A3 -.->|再诊断| A1
+    end
+
+    AGENT -->|读写业务数据| DB
+    AGENT -->|检索学习资源| RAG
+    AGENT -.->|推理调用| LLM
+    KB -.->|先修关系| AGENT
+
+    DB[("💾 SQLite 业务库<br/>students · concepts · resources<br/>questions · interactions<br/>mastery_snapshots · learning_paths")]
+
+    RAG["📚 RAG 检索<br/>bge-m3 → Chroma → bge-reranker-v2"]
+
+    LLM["☁️ 大模型 · 火山方舟<br/>Doubao-Seed-2.0-lite"]
+
+    KB["🗂️ 知识图谱<br/>40~60 概念节点<br/>+ 先修关系边"]
+
+    classDef user fill:#fce4ec,stroke:#c2185b,stroke-width:2.5px,color:#000;
+    classDef layer fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000;
+    classDef agent fill:#fff8e1,stroke:#f9a825,stroke-width:2px,color:#000;
+    classDef db fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000;
+    classDef rag fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000;
+    classDef llm fill:#fffde7,stroke:#fbc02d,stroke-width:2px,color:#000;
+    classDef kb fill:#e0f2f1,stroke:#00796b,stroke-width:2px,color:#000;
+
+    class User user;
+    class FE,API layer;
+    class A1,A2,A3 agent;
+    class DB db;
+    class RAG rag;
+    class LLM llm;
+    class KB kb;

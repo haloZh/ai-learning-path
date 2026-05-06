@@ -1,0 +1,36 @@
+---
+title: 多智能体协作闭环（诊断—生成—调整）
+---
+%%{init: {'flowchart': {'curve': 'basis', 'nodeSpacing': 50, 'rankSpacing': 55}}}%%
+flowchart TD
+
+    Start([🚀 学生注册]) --> P[初始画像录入<br/>认知水平 · 学习目标 · 风格 · 时间]
+    P --> Quiz[生成诊断测验<br/>覆盖各模块约 15 题]
+    Quiz --> Answer[学生作答]
+    Answer --> Diag
+
+    subgraph Loop["🔁 持续闭环（LangGraph 状态图）"]
+        direction TB
+        Diag["🩺 诊断 Agent<br/>映射答题→知识点<br/>输出 mastery 0~1"]
+        Plan["🗺️ 规划 Agent<br/>① 筛选薄弱点<br/>② 先修拓扑排序<br/>③ RAG 资源匹配（按学习风格）<br/>④ 时间切片"]
+        Path[/"📋 学习路径 JSON<br/>+ 可解释推荐理由"/]
+        Study["📖 学生按路径学习<br/>资源消费 · 答题 · 反馈"]
+        Opt["🔧 优化 Agent<br/>① 表现 vs 预期偏差<br/>② 决策：补充 / 降速 / 跳过<br/>③ 推入滚动复习清单"]
+
+        Diag --> Plan --> Path --> Study --> Opt
+        Opt -->|路径微调| Path
+        Opt -.->|阶段性<br/>触发再诊断| Diag
+    end
+
+    Study --> Eval[阶段评估<br/>掌握度提升 · 错题分布]
+    Eval --> End([🎓 结课报告])
+
+    classDef start fill:#fce4ec,stroke:#c2185b,stroke-width:2.5px,color:#000;
+    classDef agent fill:#fff8e1,stroke:#f9a825,stroke-width:2.5px,color:#000;
+    classDef data fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000;
+    classDef student fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000;
+
+    class Start,End start;
+    class Diag,Plan,Opt agent;
+    class P,Path,Eval data;
+    class Quiz,Answer,Study student;
