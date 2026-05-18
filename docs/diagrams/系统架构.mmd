@@ -1,51 +1,62 @@
 ---
-title: 系统整体架构（L-2 个性化学习路径系统）
+title: 系统整体架构（L-2 个性化学习路径系统 · C4 容器视图）
 ---
-%%{init: {'flowchart': {'curve': 'basis', 'nodeSpacing': 60, 'rankSpacing': 70}}}%%
-flowchart TD
+%%{init: {'flowchart': {'curve': 'linear', 'nodeSpacing': 45, 'rankSpacing': 70}}}%%
+flowchart TB
 
-    User(["👤 学生用户"])
-    User --> FE
-    FE["🖥️ 前端层 · Vue 3 + Vite<br/>画像录入 ｜ 诊断测验 ｜ 路径视图 ｜ 学习工作台"]
-    FE -->|REST| API
-    API["🔌 API 网关 · FastAPI<br/>/profile ｜ /diagnose ｜ /path ｜ /interaction"]
-    API --> AGENT
-
-    subgraph AGENT["🤖 多智能体编排（LangGraph）"]
-        direction LR
-        A1["🩺 诊断 Agent<br/>量化掌握度"]
-        A2["🗺️ 规划 Agent<br/>路径生成"]
-        A3["🔧 优化 Agent<br/>动态调整"]
-        A1 -->|状态向量| A2
-        A2 -->|路径 JSON| A3
-        A3 -.->|再诊断| A1
+    subgraph CLIENT["📱 客户端 · 浏览器"]
+        Vue["Vue 3 + Vite SPA<br/>━━━━━━━━━━━━━━<br/>画像录入 ｜ 诊断测验<br/>路径视图 ｜ 学习工作台"]
     end
 
-    AGENT -->|读写业务数据| DB
-    AGENT -->|检索学习资源| RAG
-    AGENT -.->|推理调用| LLM
-    KB -.->|先修关系| AGENT
+    subgraph APP["🖥️ 应用服务进程（Python · uvicorn）"]
+        direction TB
 
-    DB[("💾 SQLite 业务库<br/>students · concepts · resources<br/>questions · interactions<br/>mastery_snapshots · learning_paths")]
+        API["🔌 FastAPI 接口层<br/>━━━━━━━━━━━━━━<br/>/profile ｜ /diagnose<br/>/path ｜ /interaction"]
 
-    RAG["📚 RAG 检索<br/>bge-m3 → Chroma → bge-reranker-v2"]
+        subgraph CORE["⚙️ 业务核心模块"]
+            direction TB
 
-    LLM["☁️ 大模型 · 火山方舟<br/>Doubao-Seed-2.0-lite"]
+            subgraph AGENTS["🤖 LangGraph 多智能体编排"]
+                direction LR
+                A1["🩺 诊断 Agent<br/>掌握度量化"]
+                A2["🗺️ 规划 Agent<br/>路径生成"]
+                A3["🔧 优化 Agent<br/>动态调整"]
+            end
 
-    KB["🗂️ 知识图谱<br/>40~60 概念节点<br/>+ 先修关系边"]
+            ORM["📦 SQLAlchemy ORM<br/>业务数据访问"]
+            RAGSV["📚 RAG 检索服务<br/>资源召回 + 重排"]
+        end
 
-    classDef user fill:#fce4ec,stroke:#c2185b,stroke-width:2.5px,color:#000;
-    classDef layer fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000;
+        API --- CORE
+    end
+
+    subgraph DATA["💾 持久化层 · 本地"]
+        direction LR
+        DB[("SQLite 业务库<br/>━━━━━━━━━━<br/>students · concepts<br/>resources · questions<br/>interactions<br/>mastery_snapshots<br/>learning_paths")]
+        VEC[("Chroma 向量库<br/>━━━━━━━━━━━<br/>资源 chunks 索引")]
+        EMB["🧠 bge-m3 + bge-reranker-v2<br/>本地推理（CPU/GPU）"]
+    end
+
+    subgraph EXT["☁️ 外部服务"]
+        LLM["火山方舟 Doubao-Seed-2.0-lite<br/>━━━━━━━━━━━━━━━━━━━<br/>OpenAI 兼容 API"]
+    end
+
+    Vue ==>|HTTPS / REST| API
+    ORM --- DB
+    RAGSV --- VEC
+    RAGSV --- EMB
+    AGENTS -.->|HTTPS / OpenAI SDK| LLM
+
+    classDef client fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000;
+    classDef api fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000;
     classDef agent fill:#fff8e1,stroke:#f9a825,stroke-width:2px,color:#000;
-    classDef db fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000;
-    classDef rag fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000;
-    classDef llm fill:#fffde7,stroke:#fbc02d,stroke-width:2px,color:#000;
-    classDef kb fill:#e0f2f1,stroke:#00796b,stroke-width:2px,color:#000;
+    classDef svc fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1.5px,color:#000;
+    classDef data fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000;
+    classDef ext fill:#fffde7,stroke:#fbc02d,stroke-width:2px,color:#000;
 
-    class User user;
-    class FE,API layer;
+    class Vue client;
+    class API api;
     class A1,A2,A3 agent;
-    class DB db;
-    class RAG rag;
-    class LLM llm;
-    class KB kb;
+    class ORM,RAGSV svc;
+    class DB,VEC,EMB data;
+    class LLM ext;
