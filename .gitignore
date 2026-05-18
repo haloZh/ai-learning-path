@@ -40,3 +40,7 @@ data/chroma/
 # 操作系统
 .DS_Store
 Thumbs.db
+
+# Office / LibreOffice 临时锁文件
+~$*
+.~*
