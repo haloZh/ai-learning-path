@@ -59,14 +59,25 @@ def list_profiles(db: Session = Depends(get_db)):
 
 @app.post("/diagnose", response_model=schemas.DiagnoseResponse)
 def diagnose(payload: schemas.DiagnoseRequest, db: Session = Depends(get_db)):
-    if not db.get(models.Student, payload.student_id):
+    student = db.get(models.Student, payload.student_id)
+    if not student:
         raise HTTPException(status_code=404, detail="student not found")
+
+    profile = {
+        "subject": student.subject,
+        "cognitive_level": student.cognitive_level,
+        "learning_style": student.learning_style,
+        "learning_goal": student.learning_goal,
+        "available_minutes_per_day": student.available_minutes_per_day,
+    }
 
     result = _DIAGNOSE_GRAPH.invoke(
         {
             "student_id": payload.student_id,
+            "student_profile": profile,
             "answers": [a.model_dump() for a in payload.answers],
             "reasoning": [],
+            "used_mock": False,
         }
     )
     _PATH_CACHE[payload.student_id] = result.get("path", [])
@@ -75,6 +86,7 @@ def diagnose(payload: schemas.DiagnoseRequest, db: Session = Depends(get_db)):
         mastery=result.get("mastery", {}),
         path=result.get("path", []),
         reasoning=result.get("reasoning", []),
+        mock=result.get("used_mock", False),
     )
 
 
@@ -98,6 +110,7 @@ def post_interaction(event: schemas.InteractionEvent):
             "path": _PATH_CACHE[event.student_id],
             "interaction": event.model_dump(),
             "reasoning": [],
+            "used_mock": False,
         }
     )
     _PATH_CACHE[event.student_id] = result.get("path", [])
@@ -105,4 +118,5 @@ def post_interaction(event: schemas.InteractionEvent):
         student_id=event.student_id,
         path=result.get("path", []),
         reasoning=result.get("reasoning", []),
+        mock=result.get("used_mock", False),
     )

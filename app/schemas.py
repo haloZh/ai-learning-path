@@ -57,13 +57,13 @@ class DiagnoseResponse(BaseModel):
     mastery: dict[str, float] = Field(description="知识点掌握度 0~1")
     path: list[PathItemOut]
     reasoning: list[str]
-    mock: bool = Field(default=True, description="当前是否为 mock 实现")
+    mock: bool = Field(default=False, description="本次响应中是否有 Agent 走了本地 mock 兜底(LLM 不可用时为 true)")
 
 
 class LearningPathResponse(BaseModel):
     student_id: int
     path: list[PathItemOut]
-    mock: bool = True
+    mock: bool = False
 
 
 class InteractionEvent(BaseModel):
@@ -77,4 +77,4 @@ class InteractionResponse(BaseModel):
     student_id: int
     path: list[PathItemOut]
     reasoning: list[str]
-    mock: bool = True
+    mock: bool = False

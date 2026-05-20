@@ -1,12 +1,18 @@
-"""三 Agent 节点函数。当前为 mock 实现，TODO 标注接 LLM 的位置。"""
+"""三 Agent 节点函数。优先调 LLM,失败时降级到本地启发式 mock。"""
 
+import logging
+
+from . import prompts
+from .llm import LLMUnavailable, chat_json
 from .state import AgentState, PathItem
 
+logger = logging.getLogger(__name__)
 
-def diagnose_node(state: AgentState) -> AgentState:
-    answers = state.get("answers", [])
-    # TODO: 调用 LLM 分析答卷,本版本按答对率粗略估算掌握度
-    mastery: dict[str, float] = {}
+
+# ===== mock 兜底逻辑(LLM 不可用时启用) =====
+
+
+def _mock_diagnose(answers: list[dict]) -> tuple[dict[str, float], str]:
     counts: dict[str, list[int]] = {}
     for a in answers:
         cid = a["concept_id"]
@@ -14,18 +20,11 @@ def diagnose_node(state: AgentState) -> AgentState:
         counts[cid][1] += 1
         if a["correct"]:
             counts[cid][0] += 1
-    for cid, (right, total) in counts.items():
-        mastery[cid] = round(right / total, 2) if total else 0.0
-
-    reasoning = state.get("reasoning", []) + [
-        f"[diagnose] 解析 {len(answers)} 道答题,覆盖 {len(mastery)} 个知识点"
-    ]
-    return {**state, "mastery": mastery, "reasoning": reasoning}
+    mastery = {cid: round(r / t, 2) if t else 0.0 for cid, (r, t) in counts.items()}
+    return mastery, f"按答对率粗估,覆盖 {len(mastery)} 个知识点"
 
 
-def plan_node(state: AgentState) -> AgentState:
-    mastery = state.get("mastery", {})
-    # TODO: 调用 LLM 结合知识图谱 + RAG 生成路径,本版本按掌握度排序输出占位项
+def _mock_plan(mastery: dict[str, float]) -> tuple[list[PathItem], str]:
     weak_first = sorted(mastery.items(), key=lambda kv: kv[1])
     path: list[PathItem] = [
         {
@@ -36,35 +35,116 @@ def plan_node(state: AgentState) -> AgentState:
         }
         for cid, score in weak_first[:5]
     ]
-
-    reasoning = state.get("reasoning", []) + [
-        f"[plan] 选取 {len(path)} 个薄弱知识点生成首版路径"
-    ]
-    return {**state, "path": path, "reasoning": reasoning}
+    return path, f"按掌握度升序选取 {len(path)} 项"
 
 
-def optimize_node(state: AgentState) -> AgentState:
-    interaction = state.get("interaction", {})
-    path = list(state.get("path", []))
-    # TODO: 调用 LLM 评估近期表现,本版本仅根据 event 类型做最小调整
+def _mock_optimize(path: list[PathItem], interaction: dict) -> tuple[list[PathItem], str]:
+    new_path = list(path)
     event = interaction.get("event")
-    if event == "struggle" and path:
-        # 卡住:在当前节点后插入一个补强项占位
-        cid = interaction.get("concept_id", "?")
-        path.insert(
+    cid = interaction.get("concept_id", "?")
+    if event == "struggle" and new_path:
+        new_path.insert(
             1,
             {
                 "concept_id": cid,
                 "title": f"知识点 {cid} 补充练习",
                 "estimated_minutes": 20,
-                "reason": "用户在该节点反馈吃力,加一组针对性练习",
+                "reason": "用户反馈吃力,加一组针对性练习",
             },
         )
-    elif event == "mastered" and path:
-        # 已掌握:跳过当前节点
-        path = path[1:]
+    elif event == "mastered" and new_path:
+        new_path = [p for p in new_path if p["concept_id"] != cid]
+    return new_path, f"按规则处理 event={event!r}"
 
-    reasoning = state.get("reasoning", []) + [
-        f"[optimize] 收到 event={event!r},路径长度调整为 {len(path)}"
-    ]
-    return {**state, "path": path, "reasoning": reasoning}
+
+# ===== Agent 节点 =====
+
+
+def diagnose_node(state: AgentState) -> AgentState:
+    answers = state.get("answers", [])
+    profile = state.get("student_profile", {}) or {}
+    reasoning = list(state.get("reasoning", []))
+    used_mock = state.get("used_mock", False)
+
+    try:
+        result = chat_json(
+            prompts.DIAGNOSE_SYSTEM,
+            prompts.diagnose_user(profile, answers),
+        )
+        mastery = {str(k): float(v) for k, v in result.get("mastery", {}).items()}
+        if not mastery:
+            raise LLMUnavailable("LLM 返回 mastery 为空")
+        reasoning.append(f"[diagnose] LLM: {result.get('summary', '').strip()}")
+    except LLMUnavailable as e:
+        logger.info("diagnose fallback to mock: %s", e)
+        mastery, summary = _mock_diagnose(answers)
+        reasoning.append(f"[diagnose] mock 兜底({e}): {summary}")
+        used_mock = True
+
+    return {**state, "mastery": mastery, "reasoning": reasoning, "used_mock": used_mock}
+
+
+def plan_node(state: AgentState) -> AgentState:
+    mastery = state.get("mastery", {})
+    profile = state.get("student_profile", {}) or {}
+    reasoning = list(state.get("reasoning", []))
+    used_mock = state.get("used_mock", False)
+
+    try:
+        result = chat_json(
+            prompts.PLAN_SYSTEM,
+            prompts.plan_user(profile, mastery),
+        )
+        raw_path = result.get("path", [])
+        path: list[PathItem] = [
+            {
+                "concept_id": str(p["concept_id"]),
+                "title": str(p["title"]),
+                "estimated_minutes": int(p["estimated_minutes"]),
+                "reason": str(p["reason"]),
+            }
+            for p in raw_path
+        ]
+        if not path:
+            raise LLMUnavailable("LLM 返回 path 为空")
+        reasoning.append(f"[plan] LLM: {result.get('summary', '').strip()}")
+    except (LLMUnavailable, KeyError, TypeError, ValueError) as e:
+        logger.info("plan fallback to mock: %s", e)
+        path, summary = _mock_plan(mastery)
+        reasoning.append(f"[plan] mock 兜底({e}): {summary}")
+        used_mock = True
+
+    return {**state, "path": path, "reasoning": reasoning, "used_mock": used_mock}
+
+
+def optimize_node(state: AgentState) -> AgentState:
+    interaction = state.get("interaction", {}) or {}
+    current_path = list(state.get("path", []))
+    reasoning = list(state.get("reasoning", []))
+    used_mock = state.get("used_mock", False)
+
+    try:
+        result = chat_json(
+            prompts.OPTIMIZE_SYSTEM,
+            prompts.optimize_user(current_path, interaction),
+        )
+        raw_path = result.get("path", [])
+        path: list[PathItem] = [
+            {
+                "concept_id": str(p["concept_id"]),
+                "title": str(p["title"]),
+                "estimated_minutes": int(p["estimated_minutes"]),
+                "reason": str(p["reason"]),
+            }
+            for p in raw_path
+        ]
+        if not path:
+            raise LLMUnavailable("LLM 返回 path 为空")
+        reasoning.append(f"[optimize] LLM: {result.get('summary', '').strip()}")
+    except (LLMUnavailable, KeyError, TypeError, ValueError) as e:
+        logger.info("optimize fallback to mock: %s", e)
+        path, summary = _mock_optimize(current_path, interaction)
+        reasoning.append(f"[optimize] mock 兜底({e}): {summary}")
+        used_mock = True
+
+    return {**state, "path": path, "reasoning": reasoning, "used_mock": used_mock}

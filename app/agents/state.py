@@ -17,8 +17,10 @@ class PathItem(TypedDict):
 
 class AgentState(TypedDict, total=False):
     student_id: int
+    student_profile: dict
     answers: list[Answer]
     mastery: dict[str, float]
     path: list[PathItem]
     interaction: dict
     reasoning: list[str]
+    used_mock: bool
