@@ -28,3 +28,53 @@ class StudentOut(BaseModel):
     learning_style: LearningStyle
     created_at: datetime
     updated_at: datetime
+
+
+# ===== Agent / 学习路径相关 =====
+
+
+class AnswerItem(BaseModel):
+    question_id: int = Field(ge=1)
+    concept_id: str = Field(min_length=1, description="知识点编码")
+    correct: bool
+    seconds: int = Field(ge=0, description="作答耗时(秒)")
+
+
+class DiagnoseRequest(BaseModel):
+    student_id: int = Field(ge=1)
+    answers: list[AnswerItem] = Field(min_length=1)
+
+
+class PathItemOut(BaseModel):
+    concept_id: str
+    title: str
+    estimated_minutes: int
+    reason: str
+
+
+class DiagnoseResponse(BaseModel):
+    student_id: int
+    mastery: dict[str, float] = Field(description="知识点掌握度 0~1")
+    path: list[PathItemOut]
+    reasoning: list[str]
+    mock: bool = Field(default=True, description="当前是否为 mock 实现")
+
+
+class LearningPathResponse(BaseModel):
+    student_id: int
+    path: list[PathItemOut]
+    mock: bool = True
+
+
+class InteractionEvent(BaseModel):
+    student_id: int = Field(ge=1)
+    event: Literal["struggle", "mastered", "skip"] = Field(description="学习交互事件类型")
+    concept_id: str = Field(min_length=1)
+    detail: str | None = Field(default=None, description="可选自由文本反馈")
+
+
+class InteractionResponse(BaseModel):
+    student_id: int
+    path: list[PathItemOut]
+    reasoning: list[str]
+    mock: bool = True
