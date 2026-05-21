@@ -10,7 +10,6 @@ from .database import get_db, init_db
 
 _DIAGNOSE_GRAPH = build_diagnose_graph()
 _OPTIMIZE_GRAPH = build_optimize_graph()
-_PATH_CACHE: dict[int, list[dict]] = {}
 
 
 @asynccontextmanager
@@ -57,6 +56,22 @@ def list_profiles(db: Session = Depends(get_db)):
     return db.query(models.Student).order_by(models.Student.id.desc()).all()
 
 
+def _upsert_learning_path(
+    db: Session,
+    student_id: int,
+    path: list[dict],
+    reasoning: list[str],
+    is_mock: bool,
+) -> None:
+    row = db.query(models.LearningPath).filter_by(student_id=student_id).one_or_none()
+    if row is None:
+        row = models.LearningPath(student_id=student_id)
+        db.add(row)
+    row.path = path
+    row.reasoning = reasoning
+    row.is_mock = is_mock
+
+
 @app.post("/diagnose", response_model=schemas.DiagnoseResponse)
 def diagnose(payload: schemas.DiagnoseRequest, db: Session = Depends(get_db)):
     student = db.get(models.Student, payload.student_id)
@@ -80,43 +95,77 @@ def diagnose(payload: schemas.DiagnoseRequest, db: Session = Depends(get_db)):
             "used_mock": False,
         }
     )
-    _PATH_CACHE[payload.student_id] = result.get("path", [])
+    mastery = result.get("mastery", {})
+    path = result.get("path", [])
+    reasoning = result.get("reasoning", [])
+    used_mock = result.get("used_mock", False)
+
+    db.add(
+        models.MasterySnapshot(
+            student_id=payload.student_id,
+            mastery=mastery,
+            reasoning=reasoning,
+            is_mock=used_mock,
+        )
+    )
+    _upsert_learning_path(db, payload.student_id, path, reasoning, used_mock)
+    db.commit()
+
     return schemas.DiagnoseResponse(
         student_id=payload.student_id,
-        mastery=result.get("mastery", {}),
-        path=result.get("path", []),
-        reasoning=result.get("reasoning", []),
-        mock=result.get("used_mock", False),
+        mastery=mastery,
+        path=path,
+        reasoning=reasoning,
+        mock=used_mock,
     )
 
 
 @app.get("/path/{student_id}", response_model=schemas.LearningPathResponse)
-def get_path(student_id: int):
-    if student_id not in _PATH_CACHE:
+def get_path(student_id: int, db: Session = Depends(get_db)):
+    row = db.query(models.LearningPath).filter_by(student_id=student_id).one_or_none()
+    if row is None:
         raise HTTPException(status_code=404, detail="no path; run /diagnose first")
     return schemas.LearningPathResponse(
         student_id=student_id,
-        path=_PATH_CACHE[student_id],
+        path=row.path or [],
+        mock=row.is_mock,
     )
 
 
 @app.post("/interaction", response_model=schemas.InteractionResponse)
-def post_interaction(event: schemas.InteractionEvent):
-    if event.student_id not in _PATH_CACHE:
+def post_interaction(event: schemas.InteractionEvent, db: Session = Depends(get_db)):
+    row = db.query(models.LearningPath).filter_by(student_id=event.student_id).one_or_none()
+    if row is None:
         raise HTTPException(status_code=404, detail="no path; run /diagnose first")
+
+    db.add(
+        models.Interaction(
+            student_id=event.student_id,
+            event=event.event,
+            concept_code=event.concept_id,
+            detail=event.detail,
+        )
+    )
+
     result = _OPTIMIZE_GRAPH.invoke(
         {
             "student_id": event.student_id,
-            "path": _PATH_CACHE[event.student_id],
+            "path": row.path or [],
             "interaction": event.model_dump(),
             "reasoning": [],
             "used_mock": False,
         }
     )
-    _PATH_CACHE[event.student_id] = result.get("path", [])
+    path = result.get("path", [])
+    reasoning = result.get("reasoning", [])
+    used_mock = result.get("used_mock", False)
+
+    _upsert_learning_path(db, event.student_id, path, reasoning, used_mock)
+    db.commit()
+
     return schemas.InteractionResponse(
         student_id=event.student_id,
-        path=result.get("path", []),
-        reasoning=result.get("reasoning", []),
-        mock=result.get("used_mock", False),
+        path=path,
+        reasoning=reasoning,
+        mock=used_mock,
     )
