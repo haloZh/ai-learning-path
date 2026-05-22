@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -22,6 +23,11 @@ import openpyxl
 
 from app.database import SessionLocal, init_db
 from app.models import Concept, Question
+
+# JSON 标准只接受 \" \\ \/ \b \f \n \r \t \uXXXX 这些 escape;
+# 题库里 LaTeX 命令 \dfrac \sqrt \pi 等会让 json.loads 失败,
+# 这里把所有"非法 escape"的单反斜杠转成双反斜杠后再试一次。
+_INVALID_BACKSLASH = re.compile(r'\\(?!["\\/bfnrtu])')
 
 DEFAULT_SHEET = "录入表(同学填这里)"
 ALT_SHEET = "录入表(同学填这里)"
@@ -41,7 +47,7 @@ def _to_int(value, default: int | None = None) -> int | None:
 
 
 def _parse_choices(value) -> dict | list:
-    """options 字段:可能是 dict / JSON 字符串 / 空。"""
+    """options 字段:可能是 dict / JSON 字符串 / 空;兼容 LaTeX 反斜杠。"""
     if value in (None, ""):
         return {}
     if isinstance(value, (dict, list)):
@@ -49,7 +55,12 @@ def _parse_choices(value) -> dict | list:
     text = str(value).strip()
     if not text:
         return {}
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # LaTeX 命令(\dfrac/\sqrt 等)在 JSON 里非法,转义后重试
+        fixed = _INVALID_BACKSLASH.sub(r"\\\\", text)
+        return json.loads(fixed)
 
 
 def _parse_tags(value) -> list[str]:
@@ -68,6 +79,44 @@ def _build_alias_map(db) -> dict[tuple[str, str], str]:
             if all(key):
                 out[key] = c.code
     return out
+
+
+# 每个 category 的兜底 concept_code:精确/substring 都未命中时使用,
+# 保证 100% 入库;命中此层的题应被人工 review。
+_CATEGORY_DEFAULT: dict[str, str] = {
+    "排列组合": "数据分析-组合",
+    "数据描述": "数据分析-数据描述",
+    "数列": "代数-数列-等差",
+    "平面几何": "几何-平面几何-圆",
+    "解析几何": "几何-解析几何-直线方程",
+    "立体几何": "几何-空间几何体",
+    "概率": "数据分析-古典概率",
+}
+
+
+def _resolve_concept_code(
+    category: str, kp: str, alias_map: dict[tuple[str, str], str]
+) -> tuple[str | None, str]:
+    """三层反查:精确 → substring(同 category) → category 兜底。
+
+    返回 (concept_code, 命中策略),策略用于诊断/日志。
+    """
+    if (category, kp) in alias_map:
+        return alias_map[(category, kp)], "exact"
+
+    candidates = [
+        (a_kp, code)
+        for (a_cat, a_kp), code in alias_map.items()
+        if a_cat == category
+    ]
+    candidates.sort(key=lambda x: -len(x[0]))
+    for a_kp, code in candidates:
+        if a_kp and a_kp in kp:
+            return code, "substring"
+
+    if category in _CATEGORY_DEFAULT:
+        return _CATEGORY_DEFAULT[category], "category-default"
+    return None, "miss"
 
 
 def _pick_sheet(wb: openpyxl.Workbook, sheet_name: str | None):
@@ -100,6 +149,8 @@ def import_xlsx(xlsx_path: Path, sheet_name: str | None = None) -> dict:
     success = 0
     skipped = 0
     failed: list[dict] = []
+    by_strategy: dict[str, int] = {"exact": 0, "substring": 0, "category-default": 0}
+    fallback_rows: list[dict] = []  # 命中 substring 或 category-default 的行,供 review
 
     with SessionLocal() as db:
         alias_map = _build_alias_map(db)
@@ -120,7 +171,9 @@ def import_xlsx(xlsx_path: Path, sheet_name: str | None = None) -> dict:
                 failed.append({"row": row_num, "reason": "content 为空"})
                 continue
 
-            concept_code = alias_map.get((category, knowledge_point))
+            concept_code, strategy = _resolve_concept_code(
+                category, knowledge_point, alias_map
+            )
             if not concept_code:
                 failed.append({
                     "row": row_num,
@@ -129,10 +182,24 @@ def import_xlsx(xlsx_path: Path, sheet_name: str | None = None) -> dict:
                 })
                 continue
 
+            by_strategy[strategy] = by_strategy.get(strategy, 0) + 1
+            if strategy != "exact":
+                fallback_rows.append({
+                    "row": row_num,
+                    "category": category,
+                    "knowledge_point": knowledge_point,
+                    "concept_code": concept_code,
+                    "strategy": strategy,
+                })
+
             try:
                 choices = _parse_choices(data.get("options"))
-            except json.JSONDecodeError:
-                failed.append({"row": row_num, "reason": "options JSON 解析失败"})
+            except json.JSONDecodeError as e:
+                opt_preview = str(data.get("options") or "")[:60]
+                failed.append({
+                    "row": row_num,
+                    "reason": f"options JSON 解析失败({e.msg});原文片段:{opt_preview!r}",
+                })
                 continue
 
             source = _norm(data.get("source")) or None
@@ -170,7 +237,13 @@ def import_xlsx(xlsx_path: Path, sheet_name: str | None = None) -> dict:
 
         db.commit()
 
-    return {"success": success, "skipped": skipped, "failed": failed}
+    return {
+        "success": success,
+        "skipped": skipped,
+        "failed": failed,
+        "by_strategy": by_strategy,
+        "fallback_rows": fallback_rows,
+    }
 
 
 def main(argv: list[str]) -> int:
@@ -188,6 +261,24 @@ def main(argv: list[str]) -> int:
     result = import_xlsx(xlsx_path, sheet_name)
     print(f"[OK] 成功 {result['success']} 条, 跳过(重复) {result['skipped']} 条, "
           f"失败 {len(result['failed'])} 条")
+    bs = result.get("by_strategy", {})
+    if any(bs.values()):
+        print(
+            f"     命中策略: 精确 {bs.get('exact', 0)} | "
+            f"substring {bs.get('substring', 0)} | "
+            f"category 兜底 {bs.get('category-default', 0)}(建议 review)"
+        )
+    fb = result.get("fallback_rows", [])
+    if fb:
+        # 仅打印 category-default 的兜底,substring 通常足够准
+        defaults_only = [r for r in fb if r["strategy"] == "category-default"]
+        if defaults_only:
+            print(f"--- category 兜底入库行(共 {len(defaults_only)},建议人工核对) ---")
+            for r in defaults_only[:30]:
+                print(f"  行 {r['row']}: ({r['category']} - {r['knowledge_point']}) → "
+                      f"{r['concept_code']}")
+            if len(defaults_only) > 30:
+                print(f"  ...及另外 {len(defaults_only) - 30} 行(略)")
     if result["failed"]:
         print("--- 失败明细 ---")
         for f in result["failed"]:
