@@ -24,7 +24,7 @@ class Student(Base):
 
 
 class Concept(Base):
-    """知识图谱节点。先修关系存为 code 数组的 JSON,简化 m2m。"""
+    """知识图谱节点。先修关系与人工填写别名都用 JSON 简化。"""
 
     __tablename__ = "concepts"
 
@@ -33,6 +33,11 @@ class Concept(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     subject: Mapped[str] = mapped_column(String(50), nullable=False)
     prerequisite_codes: Mapped[list] = mapped_column(JSON, default=list)
+    aliases: Mapped[list] = mapped_column(
+        JSON,
+        default=list,
+        doc="[{category, knowledge_point}],用于反查人工填写的命名",
+    )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -51,15 +56,25 @@ class Resource(Base):
 
 
 class Question(Base):
+    """题库。stem/choices/explanation 允许 LaTeX 原文,前端用 KaTeX 渲染。"""
+
     __tablename__ = "questions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     concept_code: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    question_type: Mapped[str] = mapped_column(
+        String(20), default="single_choice",
+        doc="single_choice/multi_choice/true_false/fill_blank/essay",
+    )
     stem: Mapped[str] = mapped_column(Text, nullable=False)
-    choices: Mapped[list] = mapped_column(JSON, default=list)
+    choices: Mapped[dict | list] = mapped_column(JSON, default=dict, doc="客观题为 dict({A:..}),主观题留空")
     answer: Mapped[str] = mapped_column(String(20), nullable=False)
     difficulty: Mapped[int] = mapped_column(Integer, default=1)
+    score: Mapped[int] = mapped_column(Integer, default=3)
     explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str | None] = mapped_column(String(80), nullable=True, doc="真题/模拟/自编")
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tags: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class Interaction(Base):
