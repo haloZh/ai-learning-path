@@ -84,16 +84,46 @@ def diagnose_node(state: AgentState) -> AgentState:
     return {**state, "mastery": mastery, "reasoning": reasoning, "used_mock": used_mock}
 
 
+def _retrieve_resource_pool(mastery: dict[str, float]) -> dict[str, list[dict]]:
+    """对掌握度低的前若干个 concept 各检索 top-3 资源,组成 LLM 候选池。"""
+    from .rag import get_rag
+
+    if not mastery:
+        return {}
+    weak_first = sorted(mastery.items(), key=lambda kv: kv[1])[:6]
+    rag = get_rag()
+    pool: dict[str, list[dict]] = {}
+    for cid, score in weak_first:
+        hits = rag.retrieve(cid, query=cid, k=3)
+        if hits:
+            pool[cid] = [
+                {
+                    "title": h.get("title", ""),
+                    "type": h.get("type", ""),
+                    "estimated_minutes": h.get("estimated_minutes", 0),
+                    "url": h.get("url", ""),
+                }
+                for h in hits
+            ]
+    return pool
+
+
 def plan_node(state: AgentState) -> AgentState:
     mastery = state.get("mastery", {})
     profile = state.get("student_profile", {}) or {}
     reasoning = list(state.get("reasoning", []))
     used_mock = state.get("used_mock", False)
 
+    resource_pool = _retrieve_resource_pool(mastery)
+    if resource_pool:
+        reasoning.append(
+            f"[plan] RAG 检索命中 {sum(len(v) for v in resource_pool.values())} 条候选资源"
+        )
+
     try:
         result = chat_json(
             prompts.PLAN_SYSTEM,
-            prompts.plan_user(profile, mastery),
+            prompts.plan_user(profile, mastery, resource_pool),
         )
         raw_path = result.get("path", [])
         path: list[PathItem] = [
