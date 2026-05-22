@@ -30,6 +30,19 @@ class StudentOut(BaseModel):
     updated_at: datetime
 
 
+# ===== 知识点 =====
+
+
+class ConceptOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str
+    name: str
+    subject: str
+    prerequisite_codes: list[str]
+    description: str | None = None
+
+
 # ===== Agent / 学习路径相关 =====
 
 

@@ -56,6 +56,14 @@ def list_profiles(db: Session = Depends(get_db)):
     return db.query(models.Student).order_by(models.Student.id.desc()).all()
 
 
+@app.get("/concepts", response_model=list[schemas.ConceptOut])
+def list_concepts(subject: str | None = None, db: Session = Depends(get_db)):
+    q = db.query(models.Concept)
+    if subject:
+        q = q.filter(models.Concept.subject == subject)
+    return q.order_by(models.Concept.code).all()
+
+
 def _upsert_learning_path(
     db: Session,
     student_id: int,
