@@ -43,6 +43,25 @@ class ConceptOut(BaseModel):
     description: str | None = None
 
 
+# ===== 题库 =====
+
+
+class QuestionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    concept_code: str
+    question_type: str
+    stem: str
+    choices: dict | list = Field(default_factory=dict)
+    answer: str
+    difficulty: int
+    score: int
+    explanation: str | None = None
+    source: str | None = None
+    year: int | None = None
+
+
 # ===== Agent / 学习路径相关 =====
 
 

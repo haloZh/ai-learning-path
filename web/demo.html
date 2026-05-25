@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>L-2 个性化学习路径系统 · 演示</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<style>
+  :root { --primary:#1976d2; --ok:#388e3c; --warn:#f57c00; --bad:#c62828; --bg:#f5f7fa; --card:#fff; --border:#dde3eb; --text:#222; --muted:#667085; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); margin: 0; padding: 24px; color: var(--text); line-height: 1.55; }
+  .wrap { max-width: 920px; margin: 0 auto; }
+  header { text-align: center; margin-bottom: 24px; }
+  header h1 { margin: 0 0 4px; font-size: 24px; color: var(--primary); }
+  header .sub { color: var(--muted); font-size: 13px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 18px 22px; margin-bottom: 18px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+  .card h2 { margin: 0 0 12px; font-size: 16px; color: var(--primary); display: flex; align-items: center; gap: 8px; }
+  .card h2 .step { background: var(--primary); color: #fff; width: 22px; height: 22px; border-radius: 50%; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; }
+  label { display: inline-block; min-width: 70px; font-size: 13px; color: var(--muted); margin-right: 8px; }
+  input, select, textarea { padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; font-family: inherit; }
+  input[type="text"], input[type="number"] { width: 160px; }
+  textarea { width: 100%; min-height: 60px; resize: vertical; }
+  button { padding: 7px 18px; background: var(--primary); color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; transition: opacity 0.15s; }
+  button:hover { opacity: 0.86; }
+  button.secondary { background: #fff; color: var(--primary); border: 1px solid var(--primary); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; margin-bottom: 10px; }
+  .status { display: inline-block; margin-left: 12px; font-size: 12px; padding: 2px 8px; border-radius: 12px; }
+  .status.ok { background: #e8f5e9; color: var(--ok); }
+  .status.warn { background: #fff3e0; color: var(--warn); }
+  .status.bad { background: #ffebee; color: var(--bad); }
+  .question { border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; margin-bottom: 10px; background: #fafbfc; }
+  .question .meta { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .question .stem { margin-bottom: 8px; }
+  .question .choices { font-size: 13px; color: #444; margin-bottom: 8px; }
+  .question .choice { display: block; padding: 2px 0; }
+  .question .answer-mark { display: inline-flex; gap: 8px; }
+  .question .ans-btn { padding: 3px 12px; font-size: 12px; }
+  .question .ans-btn.selected.right { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .question .ans-btn.selected.wrong { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .mastery-row { display: grid; grid-template-columns: 200px 50px 1fr; gap: 8px; align-items: center; font-size: 13px; padding: 4px 0; }
+  .mastery-row .code { color: #444; }
+  .mastery-row .val { color: var(--muted); font-family: monospace; }
+  .mastery-row .bar { background: #eef2f7; height: 14px; border-radius: 3px; overflow: hidden; }
+  .mastery-row .bar > span { display: block; height: 100%; background: linear-gradient(90deg, #c62828 0%, #f57c00 50%, #388e3c 100%); }
+  .path-item { background: #fafbfc; border: 1px solid var(--border); border-left: 3px solid var(--primary); border-radius: 4px; padding: 10px 14px; margin-bottom: 8px; }
+  .path-item .title { font-weight: 600; font-size: 14px; }
+  .path-item .meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .path-item .reason { font-size: 13px; color: #555; margin-top: 6px; }
+  .path-item.new { border-left-color: var(--ok); background: #e8f5e9; animation: flash 1s ease-out; }
+  @keyframes flash { 0% { background: #fff59d; } 100% { background: #e8f5e9; } }
+  .reasoning { font-size: 12px; color: var(--muted); background: #f3f4f6; padding: 8px 12px; border-radius: 4px; margin-top: 10px; font-family: monospace; }
+  .reasoning div { margin: 2px 0; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .err { color: var(--bad); font-size: 12px; }
+  .hidden { display: none; }
+  .footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>L-2 个性化学习路径系统 · 演示</h1>
+  <div class="sub">北科大 MBA · 人工智能课大作业 · AI 赋能下的个性化学习路径设计与实现</div>
+</header>
+
+<!-- ① 学生画像 -->
+<div class="card">
+  <h2><span class="step">1</span>学生画像</h2>
+  <div class="row">
+    <span><label>昵称</label><input type="text" id="nickname" value="演示同学"></span>
+    <span><label>学科</label><input type="text" id="subject" value="管综数学"></span>
+  </div>
+  <div class="row">
+    <span><label>认知层</label>
+      <select id="cognitive_level">
+        <option value="beginner">初学(beginner)</option>
+        <option value="intermediate" selected>进阶(intermediate)</option>
+        <option value="advanced">熟练(advanced)</option>
+      </select>
+    </span>
+    <span><label>学习风格</label>
+      <select id="learning_style">
+        <option value="reading" selected>阅读(reading)</option>
+        <option value="visual">视觉(visual)</option>
+        <option value="auditory">听觉(auditory)</option>
+        <option value="kinesthetic">动手(kinesthetic)</option>
+      </select>
+    </span>
+    <span><label>每日时间</label><input type="number" id="minutes" value="60" min="5" max="600"> 分钟</span>
+  </div>
+  <div class="row">
+    <span style="flex:1; min-width: 100%;"><label>学习目标</label>
+      <input type="text" id="goal" value="2027 年管综考过国家线" style="width: 70%;"></span>
+  </div>
+  <button id="btn-create">创建学生画像</button>
+  <span id="profile-status" class="status hidden"></span>
+</div>
+
+<!-- ② 抽题 + 答题 -->
+<div class="card">
+  <h2><span class="step">2</span>模拟答卷</h2>
+  <div class="row">
+    <span><label>抽题数</label><input type="number" id="n-questions" value="5" min="1" max="10" style="width: 60px;"></span>
+    <button id="btn-sample" class="secondary">从题库抽题</button>
+    <span class="hint">每题有"对 / 错"按钮 — 自己点你"答对了没",像真在做诊断测试</span>
+  </div>
+  <div id="questions-area"></div>
+  <button id="btn-diagnose" class="hidden">提交诊断</button>
+  <span id="diag-status" class="status hidden"></span>
+</div>
+
+<!-- ③ 诊断 + 路径 -->
+<div class="card hidden" id="result-card">
+  <h2><span class="step">3</span>诊断结果与推荐路径</h2>
+  <h3 style="font-size: 14px; color: var(--muted); margin: 6px 0;">知识点掌握度</h3>
+  <div id="mastery-area"></div>
+  <h3 style="font-size: 14px; color: var(--muted); margin: 16px 0 6px;">推荐学习路径</h3>
+  <div id="path-area"></div>
+  <div id="reasoning-area" class="reasoning"></div>
+</div>
+
+<!-- ④ 交互动态调整 -->
+<div class="card hidden" id="interact-card">
+  <h2><span class="step">4</span>学习交互(动态调整)</h2>
+  <div class="hint" style="margin-bottom: 10px;">学生在学习中遇到问题、或已掌握某节点时,反馈给系统,优化 Agent 重新规划路径</div>
+  <div class="row">
+    <span><label>知识点</label>
+      <select id="interact-concept" style="min-width: 220px;"></select>
+    </span>
+    <span><label>事件</label>
+      <select id="interact-event">
+        <option value="struggle">struggle - 卡住,讲解不清</option>
+        <option value="mastered">mastered - 已掌握</option>
+        <option value="skip">skip - 想暂时跳过</option>
+      </select>
+    </span>
+  </div>
+  <div class="row">
+    <span style="flex:1; min-width: 100%;"><label>具体反馈</label>
+      <input type="text" id="interact-detail" value="判别式总是算错" style="width: 70%;"></span>
+  </div>
+  <button id="btn-interact">提交反馈</button>
+  <span id="interact-status" class="status hidden"></span>
+</div>
+
+<div class="footer">
+  后端 FastAPI + LangGraph + Doubao + bge-m3/Chroma · 数据库 SQLite ·
+  <a href="/docs" target="_blank">API 文档(Swagger)</a>
+</div>
+
+</div>
+
+<script>
+const API = ""; // 同源
+let state = {
+  studentId: null,
+  questions: [],   // [{q, answer: "right"|"wrong"|null}, ...]
+  conceptOptions: [],  // [{code, name}, ...]
+};
+
+// ---- KaTeX 自动渲染 ----
+function renderMath(el) {
+  if (window.renderMathInElement) {
+    renderMathInElement(el || document.body, {
+      delimiters: [
+        {left: "$$", right: "$$", display: true},
+        {left: "$", right: "$", display: false},
+      ],
+      throwOnError: false,
+    });
+  }
+}
+
+// ---- 工具 ----
+function setStatus(elId, text, kind) {
+  const el = document.getElementById(elId);
+  el.textContent = text;
+  el.className = "status " + (kind || "ok");
+  el.classList.remove("hidden");
+}
+function postJson(path, body) {
+  return fetch(API + path, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  }).then(async r => {
+    if (!r.ok) throw new Error((await r.text()) || r.statusText);
+    return r.json();
+  });
+}
+function getJson(path) {
+  return fetch(API + path).then(async r => {
+    if (!r.ok) throw new Error((await r.text()) || r.statusText);
+    return r.json();
+  });
+}
+
+// ---- ① 创建学生 ----
+document.getElementById("btn-create").addEventListener("click", async () => {
+  const payload = {
+    nickname: document.getElementById("nickname").value.trim(),
+    subject: document.getElementById("subject").value.trim(),
+    cognitive_level: document.getElementById("cognitive_level").value,
+    learning_style: document.getElementById("learning_style").value,
+    available_minutes_per_day: parseInt(document.getElementById("minutes").value, 10),
+    learning_goal: document.getElementById("goal").value.trim(),
+  };
+  try {
+    setStatus("profile-status", "创建中...", "warn");
+    const stu = await postJson("/profile", payload);
+    state.studentId = stu.id;
+    setStatus("profile-status", `✓ 学生 id=${stu.id}`, "ok");
+  } catch (e) {
+    setStatus("profile-status", "✗ " + e.message, "bad");
+  }
+});
+
+// ---- ② 抽题 ----
+document.getElementById("btn-sample").addEventListener("click", async () => {
+  const n = parseInt(document.getElementById("n-questions").value, 10) || 5;
+  try {
+    const list = await getJson(`/questions/sample?n=${n}`);
+    state.questions = list.map(q => ({q: q, answer: null}));
+    renderQuestions();
+    document.getElementById("btn-diagnose").classList.remove("hidden");
+  } catch (e) {
+    alert("抽题失败: " + e.message);
+  }
+});
+
+function renderQuestions() {
+  const area = document.getElementById("questions-area");
+  area.innerHTML = "";
+  state.questions.forEach((item, idx) => {
+    const q = item.q;
+    const choicesHtml = Object.entries(q.choices || {})
+      .map(([k, v]) => `<span class="choice"><b>${k}.</b> ${v}</span>`).join("");
+    const div = document.createElement("div");
+    div.className = "question";
+    div.innerHTML = `
+      <div class="meta">Q${idx+1} · [${q.concept_code}] · 难度 ${q.difficulty} · 答案 ${q.answer || "(主观)"}</div>
+      <div class="stem">${q.stem}</div>
+      <div class="choices">${choicesHtml}</div>
+      <div class="answer-mark">
+        我答得:
+        <button class="ans-btn secondary" data-idx="${idx}" data-ans="right">✓ 对</button>
+        <button class="ans-btn secondary" data-idx="${idx}" data-ans="wrong">✗ 错</button>
+      </div>
+    `;
+    area.appendChild(div);
+  });
+  // 绑定按钮
+  area.querySelectorAll(".ans-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      const ans = btn.dataset.ans;
+      state.questions[idx].answer = ans;
+      // 重置兄弟按钮样式
+      btn.parentElement.querySelectorAll(".ans-btn").forEach(b => b.classList.remove("selected", "right", "wrong"));
+      btn.classList.add("selected", ans);
+    });
+  });
+  renderMath(area);
+}
+
+// ---- ③ 提交诊断 ----
+document.getElementById("btn-diagnose").addEventListener("click", async () => {
+  if (!state.studentId) { alert("请先创建学生画像"); return; }
+  const answered = state.questions.filter(it => it.answer !== null);
+  if (answered.length === 0) { alert("请至少标记一道题对错"); return; }
+
+  const answers = answered.map(it => ({
+    question_id: it.q.id,
+    concept_id: it.q.concept_code,
+    correct: it.answer === "right",
+    seconds: 60,  // 演示固定 60s
+  }));
+
+  try {
+    setStatus("diag-status", "诊断中(LLM 调用约 5-15s)...", "warn");
+    const res = await postJson("/diagnose", {
+      student_id: state.studentId,
+      answers: answers,
+    });
+    setStatus("diag-status", res.mock ? "⚠️ mock 兜底" : "✓ LLM 已调用", res.mock ? "warn" : "ok");
+    renderResult(res);
+    document.getElementById("result-card").classList.remove("hidden");
+    await loadConceptOptions();
+    document.getElementById("interact-card").classList.remove("hidden");
+  } catch (e) {
+    setStatus("diag-status", "✗ " + e.message, "bad");
+  }
+});
+
+function renderResult(res) {
+  // mastery
+  const m = document.getElementById("mastery-area");
+  m.innerHTML = "";
+  const entries = Object.entries(res.mastery || {}).sort((a, b) => a[1] - b[1]);
+  entries.forEach(([code, val]) => {
+    const row = document.createElement("div");
+    row.className = "mastery-row";
+    row.innerHTML = `
+      <span class="code">${code}</span>
+      <span class="val">${val.toFixed(2)}</span>
+      <span class="bar"><span style="width: ${(val * 100).toFixed(0)}%"></span></span>
+    `;
+    m.appendChild(row);
+  });
+
+  renderPath(res.path || []);
+
+  const r = document.getElementById("reasoning-area");
+  r.innerHTML = "";
+  (res.reasoning || []).forEach(line => {
+    const d = document.createElement("div");
+    d.textContent = line;
+    r.appendChild(d);
+  });
+}
+
+function renderPath(path, markNewIdx) {
+  const p = document.getElementById("path-area");
+  p.innerHTML = "";
+  path.forEach((item, idx) => {
+    const d = document.createElement("div");
+    d.className = "path-item" + (idx === markNewIdx ? " new" : "");
+    d.innerHTML = `
+      <div class="title">${idx+1}. ${item.title}</div>
+      <div class="meta">${item.estimated_minutes} 分钟 · ${item.concept_id}</div>
+      <div class="reason">${item.reason}</div>
+    `;
+    p.appendChild(d);
+  });
+  renderMath(p);
+}
+
+// ---- 加载 concept 下拉 ----
+async function loadConceptOptions() {
+  if (state.conceptOptions.length > 0) return;
+  try {
+    const list = await getJson("/concepts?subject=管综数学");
+    state.conceptOptions = list;
+    const sel = document.getElementById("interact-concept");
+    sel.innerHTML = list.map(c => `<option value="${c.code}">${c.code}</option>`).join("");
+    // 默认选择第一个 mastery 最低的 concept
+    const masteryEntries = document.querySelectorAll("#mastery-area .mastery-row");
+    if (masteryEntries.length > 0) {
+      const lowest = masteryEntries[0].querySelector(".code").textContent;
+      sel.value = lowest;
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// ---- ④ 提交交互 ----
+document.getElementById("btn-interact").addEventListener("click", async () => {
+  if (!state.studentId) { alert("先做诊断"); return; }
+  const payload = {
+    student_id: state.studentId,
+    event: document.getElementById("interact-event").value,
+    concept_id: document.getElementById("interact-concept").value,
+    detail: document.getElementById("interact-detail").value.trim() || null,
+  };
+  try {
+    setStatus("interact-status", "调用优化 Agent...", "warn");
+    const res = await postJson("/interaction", payload);
+    setStatus("interact-status", res.mock ? "⚠️ mock 兜底" : "✓ 路径已更新", res.mock ? "warn" : "ok");
+    // 找出"新增"的项,高亮
+    const oldTitles = new Set([...document.querySelectorAll("#path-area .path-item .title")]
+      .map(el => el.textContent.replace(/^\d+\.\s*/, "")));
+    let newIdx = -1;
+    res.path.forEach((p, i) => {
+      if (!oldTitles.has(p.title) && newIdx < 0) newIdx = i;
+    });
+    renderPath(res.path, newIdx);
+    // 更新 reasoning
+    const r = document.getElementById("reasoning-area");
+    (res.reasoning || []).forEach(line => {
+      const d = document.createElement("div");
+      d.textContent = "[interaction] " + line;
+      d.style.color = "var(--ok)";
+      r.appendChild(d);
+    });
+  } catch (e) {
+    setStatus("interact-status", "✗ " + e.message, "bad");
+  }
+});
+
+// 页面加载完成后渲染一次
+document.addEventListener("DOMContentLoaded", () => {
+  setTimeout(() => renderMath(document.body), 100);
+});
+</script>
+</body>
+</html>

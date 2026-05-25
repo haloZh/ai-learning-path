@@ -1,12 +1,18 @@
+import random
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from . import models, schemas
 from .agents import build_diagnose_graph, build_optimize_graph
 from .database import get_db, init_db
+
+_WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 _DIAGNOSE_GRAPH = build_diagnose_graph()
 _OPTIMIZE_GRAPH = build_optimize_graph()
@@ -27,6 +33,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+if _WEB_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(_WEB_DIR)), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    demo = _WEB_DIR / "demo.html"
+    if demo.exists():
+        return FileResponse(demo)
+    raise HTTPException(status_code=404, detail="demo.html not found")
 
 
 @app.get("/health")
@@ -62,6 +79,24 @@ def list_concepts(subject: str | None = None, db: Session = Depends(get_db)):
     if subject:
         q = q.filter(models.Concept.subject == subject)
     return q.order_by(models.Concept.code).all()
+
+
+@app.get("/questions/sample", response_model=list[schemas.QuestionOut])
+def sample_questions(n: int = 5, db: Session = Depends(get_db)):
+    """随机抽 n 道题,每个 concept_code 至多 1 道,保证多样性。"""
+    n = max(1, min(n, 30))
+    all_q = db.query(models.Question).all()
+    random.shuffle(all_q)
+    seen: set[str] = set()
+    out: list[models.Question] = []
+    for q in all_q:
+        if q.concept_code in seen:
+            continue
+        seen.add(q.concept_code)
+        out.append(q)
+        if len(out) >= n:
+            break
+    return out
 
 
 def _upsert_learning_path(
