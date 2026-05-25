@@ -12,7 +12,9 @@ from . import models, schemas
 from .agents import build_diagnose_graph, build_optimize_graph
 from .database import get_db, init_db
 
-_WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_WEB_DIR = _PROJECT_ROOT / "web"
+_DIST_DIR = _PROJECT_ROOT / "frontend" / "dist"
 
 _DIAGNOSE_GRAPH = build_diagnose_graph()
 _OPTIMIZE_GRAPH = build_optimize_graph()
@@ -34,16 +36,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+if _DIST_DIR.exists():
+    # 生产路径:Vue 构建产物。/assets 由 Vite 生成,需直接 serve;SPA 路由由
+    # 末尾 catch-all 兜底,因此 StaticFiles 不挂 / 根目录。
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(_DIST_DIR / "assets")),
+        name="assets",
+    )
+
 if _WEB_DIR.exists():
+    # 旧版 demo.html 仍保留,可通过 /static/demo.html 访问
     app.mount("/static", StaticFiles(directory=str(_WEB_DIR)), name="static")
+
+
+def _spa_index() -> FileResponse:
+    """优先返回 Vue 构建产物 dist/index.html;否则降级到 web/demo.html。"""
+    if _DIST_DIR.exists():
+        idx = _DIST_DIR / "index.html"
+        if idx.exists():
+            return FileResponse(idx)
+    demo = _WEB_DIR / "demo.html"
+    if demo.exists():
+        return FileResponse(demo)
+    raise HTTPException(status_code=404, detail="frontend not built; run `npm run build`")
 
 
 @app.get("/", include_in_schema=False)
 def index():
-    demo = _WEB_DIR / "demo.html"
-    if demo.exists():
-        return FileResponse(demo)
-    raise HTTPException(status_code=404, detail="demo.html not found")
+    return _spa_index()
 
 
 @app.get("/health")
@@ -212,3 +233,7 @@ def post_interaction(event: schemas.InteractionEvent, db: Session = Depends(get_
         reasoning=reasoning,
         mock=used_mock,
     )
+
+
+# 前端使用 hash 路由(/#/profile 等),浏览器 hash 部分不会发到服务器,
+# 因此无需 SPA fallback;访问根 / 直接返回 index.html 即可。
