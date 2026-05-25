@@ -84,6 +84,7 @@ def _build_alias_map(db) -> dict[tuple[str, str], str]:
 # 每个 category 的兜底 concept_code:精确/substring 都未命中时使用,
 # 保证 100% 入库;命中此层的题应被人工 review。
 _CATEGORY_DEFAULT: dict[str, str] = {
+    # 数据分析 / 几何
     "排列组合": "数据分析-组合",
     "数据描述": "数据分析-数据描述",
     "数列": "代数-数列-等差",
@@ -91,6 +92,42 @@ _CATEGORY_DEFAULT: dict[str, str] = {
     "解析几何": "几何-解析几何-直线方程",
     "立体几何": "几何-空间几何体",
     "概率": "数据分析-古典概率",
+    "容斥应用题": "数据分析-组合",
+    # 算术 - 基础
+    "绝对值模块": "算术-绝对值",
+    "实数模块": "算术-绝对值",  # 多见"非负数之和为零"
+    "平均值模块": "算术-平均数",
+    "平均值统计模块": "算术-平均数",
+    "比例应用题": "算术-比例",
+    # 算术 - 应用题
+    "行程应用题": "算术-应用题-行程",
+    "工程应用题": "算术-应用题-工程",
+    "浓度应用题": "算术-应用题-浓度",
+    "利润应用题": "算术-应用题-利润",
+    "年龄应用题": "代数-一元一次方程",  # 年龄差不变 → 等量关系建模
+    # 代数 - 整式 / 分式
+    "整式运算": "代数-整式运算",
+    "整式乘法": "代数-整式运算",
+    "整式求值": "代数-整式运算",
+    "整式配方": "代数-整式运算",
+    "因式分解": "代数-整式运算",
+    "分式基础": "代数-分式运算",
+    "分式化简": "代数-分式运算",
+    "分式运算": "代数-分式运算",
+    "分式恒等变形": "代数-分式运算",
+    "分式方程": "代数-分式运算",
+    # 代数 - 方程
+    "一元一次方程": "代数-一元一次方程",
+    "二元一次方程组": "代数-一元一次方程",
+    "一元二次方程": "代数-一元二次方程",
+    "含参一元二次方程": "代数-一元二次方程",
+    "韦达定理": "代数-一元二次方程-韦达定理",
+    # 代数 - 不等式
+    "分式不等式": "代数-不等式",
+    "一元一次不等式": "代数-不等式",
+    "一元二次不等式": "代数-不等式",
+    "高次不等式": "代数-不等式",
+    "均值不等式不等式": "代数-不等式",
 }
 
 
@@ -152,10 +189,22 @@ def import_xlsx(xlsx_path: Path, sheet_name: str | None = None) -> dict:
     by_strategy: dict[str, int] = {"exact": 0, "substring": 0, "category-default": 0}
     fallback_rows: list[dict] = []  # 命中 substring 或 category-default 的行,供 review
 
+    # 第 2 行可能是字段中文说明(原模板风格),也可能直接是数据(同学清理过模板)。
+    # 用 difficulty 是否可解析为整数判断:中文说明会写"难度(1-5)",真题写 1~5。
+    data_start = 2  # 默认跳过第 1 行 header 与第 2 行说明
+    if len(rows) >= 2:
+        row2_diff_idx = header_idx.get("difficulty")
+        if row2_diff_idx is not None and row2_diff_idx < len(rows[1]):
+            try:
+                int(float(_norm(rows[1][row2_diff_idx])))
+                data_start = 1  # 第 2 行 difficulty 是数字,认为已经是数据
+            except (TypeError, ValueError):
+                pass
+
     with SessionLocal() as db:
         alias_map = _build_alias_map(db)
 
-        for row_num, row in enumerate(rows[2:], start=3):  # 第 3 行起为数据
+        for row_num, row in enumerate(rows[data_start:], start=data_start + 1):
             if not any(row):
                 continue
 
