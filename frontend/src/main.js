@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 // hash 模式:URL 形如 /#/profile,服务端无需 SPA fallback,
 // 也不会与 GET /profile 等后端 API 冲突。
 import { createRouter, createWebHashHistory } from 'vue-router'
+import naive from 'naive-ui'
 
 import App from './App.vue'
 import ProfileView from './views/ProfileView.vue'
@@ -23,4 +24,4 @@ const router = createRouter({
   ],
 })
 
-createApp(App).use(router).mount('#app')
+createApp(App).use(router).use(naive).mount('#app')
