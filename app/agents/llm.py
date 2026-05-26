@@ -16,7 +16,9 @@ from ..config import ARK_API_KEY, ARK_BASE_URL, ARK_MODEL
 logger = logging.getLogger(__name__)
 
 _PLACEHOLDER_KEYS = {"", "put-your-ark-api-key-here"}
-_TIMEOUT_SECONDS = 30.0
+# 单次调用 timeout:火山方舟偶尔会响应到 30-50s,放宽到 60s 减少误退化到 mock。
+# 应用层 retries=1 → 最坏 120s 后兜底,在演示场景可接受;正常调用 5-15s。
+_TIMEOUT_SECONDS = 60.0
 
 
 class LLMUnavailable(Exception):
