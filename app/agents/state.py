@@ -24,3 +24,7 @@ class AgentState(TypedDict, total=False):
     interaction: dict
     reasoning: list[str]
     used_mock: bool
+    # plan_node 写入,evaluate_node 复用,避免二次 RAG 检索
+    resource_pool: dict[str, list[dict]]
+    # evaluate_node 写入:{score, scores:{...5 dim}, strengths, improvements, summary}
+    evaluation: dict

@@ -111,6 +111,28 @@ class MasterySnapshot(Base):
     student: Mapped["Student"] = relationship()
 
 
+class PlanEvaluation(Base):
+    """对一次 diagnose 产出的 path 做客观评价,留作工程持续优化的追踪数据。"""
+
+    __tablename__ = "plan_evaluations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    student_id: Mapped[int] = mapped_column(
+        ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    score: Mapped[int] = mapped_column(Integer, nullable=False, doc="总分 0-100")
+    scores: Mapped[dict] = mapped_column(
+        JSON, default=dict, doc="五维子分:{targeting,ordering,feasibility,personalization,resource_match}"
+    )
+    strengths: Mapped[str | None] = mapped_column(Text, nullable=True)
+    improvements: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_mock: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    student: Mapped["Student"] = relationship()
+
+
 class LearningPath(Base):
     """每个学生维护一行最新路径(每次 diagnose/interaction 都 upsert)。"""
 

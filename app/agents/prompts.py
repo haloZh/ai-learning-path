@@ -92,3 +92,57 @@ def optimize_user(path: list[dict], interaction: dict) -> str:
     return "当前路径与最新交互如下,请输出调整后的 path JSON:\n" + json.dumps(
         payload, ensure_ascii=False, indent=2
     )
+
+
+# ===== 评价 Agent =====
+
+EVALUATE_SYSTEM = """你是一名学习路径质量审核专家,任务是对刚生成的学习路径做客观评价。
+
+输出严格 JSON,字段:
+- score: integer 0-100, 总分
+- scores: object, 5 个维度各 0-10:
+    - targeting: 针对性, path 是否聚焦在 mastery 较低的知识点上
+    - ordering: 顺序合理性, 先修关系是否得到尊重(如等差应在等比之前)
+    - feasibility: 可行性, 单项时长 5-120, 总时长应 ≤ 学生当日预算的 1.3 倍
+    - personalization: 个性化, 是否与认知层 / 学习风格 / 目标匹配
+    - resource_match: 资源匹配度, path 的 title 是否引用了 resource_pool 中的真实资源
+- strengths: string, 中文 ≤ 50 字, 本路径亮点
+- improvements: string, 中文 ≤ 50 字, 本路径待改进
+- summary: string, 中文 ≤ 40 字, 一句话总评
+
+评分原则:
+- 客观、可解释,不刷分;扣分点在 improvements 里指出
+- targeting: path 项 80% 以上落在 mastery 高的 concept 上 → ≤4 分
+- ordering: 出现先修在后修之后 → ≤6 分
+- feasibility: 总时长超出预算 30% 以上 → ≤5 分
+- personalization: path 完全无视 cognitive_level / learning_style → ≤5 分
+- resource_match:
+    - title 与 resource_pool 高度对齐(原文复用) → 9-10
+    - 仅部分项命中 → 5-7
+    - resource_pool 为空时该维度按 7 分中性处理(避免无资源时不公平扣分)
+- 总分 = round((targeting + ordering + feasibility + personalization + resource_match) * 2)
+"""
+
+
+def evaluate_user(
+    profile: dict,
+    mastery: dict,
+    path: list[dict],
+    resource_pool: dict | None,
+) -> str:
+    payload = {
+        "profile": {
+            "subject": profile.get("subject"),
+            "cognitive_level": profile.get("cognitive_level"),
+            "learning_style": profile.get("learning_style"),
+            "available_minutes_per_day": profile.get("available_minutes_per_day"),
+            "learning_goal": profile.get("learning_goal"),
+        },
+        "mastery": mastery,
+        "path": path,
+        "resource_pool": resource_pool or {},
+    }
+    return (
+        "学生画像、诊断结果、当前路径、候选资源池如下,请输出评价 JSON:\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+    )

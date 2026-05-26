@@ -57,6 +57,45 @@ def _mock_optimize(path: list[PathItem], interaction: dict) -> tuple[list[PathIt
     return new_path, f"按规则处理 event={event!r}"
 
 
+def _mock_evaluate(
+    profile: dict, mastery: dict[str, float], path: list[PathItem]
+) -> dict:
+    """LLM 不可用时的本地启发式评分:粗略可用,细节差。"""
+    targeting = 7
+    if mastery and path:
+        avg_mastery_in_path = sum(
+            mastery.get(p["concept_id"], 0.5) for p in path
+        ) / len(path)
+        # path 落在 mastery 低的位置 → 高分
+        targeting = max(3, min(10, int(round((1 - avg_mastery_in_path) * 12))))
+
+    feasibility = 7
+    budget = profile.get("available_minutes_per_day") or 60
+    total_min = sum(p.get("estimated_minutes", 0) for p in path)
+    if total_min <= budget:
+        feasibility = 9
+    elif total_min <= budget * 1.3:
+        feasibility = 7
+    else:
+        feasibility = 4
+
+    scores = {
+        "targeting": targeting,
+        "ordering": 7,
+        "feasibility": feasibility,
+        "personalization": 6,
+        "resource_match": 6,
+    }
+    total = round(sum(scores.values()) * 2)
+    return {
+        "score": total,
+        "scores": scores,
+        "strengths": "(mock) 路径覆盖薄弱知识点",
+        "improvements": "(mock) 个性化与资源匹配度无法精细评估",
+        "summary": "(mock) 本地启发式评分,LLM 不可用",
+    }
+
+
 # ===== Agent 节点 =====
 
 
@@ -144,7 +183,56 @@ def plan_node(state: AgentState) -> AgentState:
         reasoning.append(f"[plan] mock 兜底({e}): {summary}")
         used_mock = True
 
-    return {**state, "path": path, "reasoning": reasoning, "used_mock": used_mock}
+    return {
+        **state,
+        "path": path,
+        "resource_pool": resource_pool,  # 供 evaluate_node 复用,免二次 RAG
+        "reasoning": reasoning,
+        "used_mock": used_mock,
+    }
+
+
+def evaluate_node(state: AgentState) -> AgentState:
+    """对刚生成的 path 做客观评价,落地为 evaluation 字段供工程持续优化追踪。"""
+    profile = state.get("student_profile", {}) or {}
+    mastery = state.get("mastery", {})
+    path = list(state.get("path", []))
+    resource_pool = state.get("resource_pool", {}) or {}
+    reasoning = list(state.get("reasoning", []))
+    used_mock = state.get("used_mock", False)
+
+    if not path:
+        # path 为空(diagnose/plan 全失败)时不评价,避免误打分
+        return {**state, "evaluation": {}, "reasoning": reasoning, "used_mock": used_mock}
+
+    try:
+        result = chat_json(
+            prompts.EVALUATE_SYSTEM,
+            prompts.evaluate_user(profile, mastery, path, resource_pool),
+        )
+        score = int(result.get("score", 0))
+        scores = {str(k): int(v) for k, v in result.get("scores", {}).items()}
+        if not scores or score <= 0:
+            raise LLMUnavailable("LLM 返回评分缺失或为 0")
+        evaluation = {
+            "score": score,
+            "scores": scores,
+            "strengths": str(result.get("strengths", "")).strip(),
+            "improvements": str(result.get("improvements", "")).strip(),
+            "summary": str(result.get("summary", "")).strip(),
+        }
+        reasoning.append(
+            f"[evaluate] LLM: 总分 {score} - {evaluation['summary']}"
+        )
+    except (LLMUnavailable, KeyError, TypeError, ValueError) as e:
+        logger.info("evaluate fallback to mock: %s", e)
+        evaluation = _mock_evaluate(profile, mastery, path)
+        reasoning.append(
+            f"[evaluate] mock 兜底({e}): 总分 {evaluation['score']}"
+        )
+        used_mock = True
+
+    return {**state, "evaluation": evaluation, "reasoning": reasoning, "used_mock": used_mock}
 
 
 def optimize_node(state: AgentState) -> AgentState:

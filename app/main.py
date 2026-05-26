@@ -163,6 +163,7 @@ def diagnose(payload: schemas.DiagnoseRequest, db: Session = Depends(get_db)):
     path = result.get("path", [])
     reasoning = result.get("reasoning", [])
     used_mock = result.get("used_mock", False)
+    evaluation = result.get("evaluation") or None
 
     db.add(
         models.MasterySnapshot(
@@ -173,6 +174,30 @@ def diagnose(payload: schemas.DiagnoseRequest, db: Session = Depends(get_db)):
         )
     )
     _upsert_learning_path(db, payload.student_id, path, reasoning, used_mock)
+
+    evaluation_out = None
+    if evaluation:
+        # 留痕:每次诊断写一行评价历史
+        db.add(
+            models.PlanEvaluation(
+                student_id=payload.student_id,
+                score=evaluation["score"],
+                scores=evaluation.get("scores", {}),
+                strengths=evaluation.get("strengths"),
+                improvements=evaluation.get("improvements"),
+                summary=evaluation.get("summary"),
+                is_mock=used_mock,
+            )
+        )
+        evaluation_out = schemas.EvaluationOut(
+            score=evaluation["score"],
+            scores=schemas.EvaluationScores(**evaluation.get("scores", {})),
+            strengths=evaluation.get("strengths"),
+            improvements=evaluation.get("improvements"),
+            summary=evaluation.get("summary"),
+            mock=used_mock,
+        )
+
     db.commit()
 
     return schemas.DiagnoseResponse(
@@ -180,6 +205,7 @@ def diagnose(payload: schemas.DiagnoseRequest, db: Session = Depends(get_db)):
         mastery=mastery,
         path=path,
         reasoning=reasoning,
+        evaluation=evaluation_out,
         mock=used_mock,
     )
 
