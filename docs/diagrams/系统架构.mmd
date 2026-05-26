@@ -11,16 +11,17 @@ flowchart TB
     subgraph APP["🖥️ 应用服务进程（Python · uvicorn）"]
         direction TB
 
-        API["🔌 FastAPI 接口层<br/>━━━━━━━━━━━━━━<br/>/profile ｜ /diagnose<br/>/path ｜ /interaction"]
+        API["🔌 FastAPI 接口层<br/>━━━━━━━━━━━━━━<br/>/profile ｜ /concepts<br/>/questions/sample<br/>/diagnose ｜ /path<br/>/interaction"]
 
         subgraph CORE["⚙️ 业务核心模块"]
             direction TB
 
-            subgraph AGENTS["🤖 LangGraph 多智能体编排"]
+            subgraph AGENTS["🤖 LangGraph 多智能体编排（4 Agent）"]
                 direction LR
                 A1["🩺 诊断 Agent<br/>掌握度量化"]
                 A2["🗺️ 规划 Agent<br/>路径生成"]
                 A3["🔧 优化 Agent<br/>动态调整"]
+                A4["⭐ 评价 Agent<br/>AI 自评 + 五维评分"]
             end
 
             ORM["📦 SQLAlchemy ORM<br/>业务数据访问"]
@@ -32,7 +33,7 @@ flowchart TB
 
     subgraph DATA["💾 持久化层 · 本地"]
         direction LR
-        DB[("SQLite 业务库<br/>━━━━━━━━━━<br/>students · concepts<br/>resources · questions<br/>interactions<br/>mastery_snapshots<br/>learning_paths")]
+        DB[("SQLite 业务库<br/>━━━━━━━━━━<br/>students · concepts<br/>resources · questions<br/>interactions<br/>mastery_snapshots<br/>learning_paths<br/>plan_evaluations")]
         VEC[("Chroma 向量库<br/>━━━━━━━━━━━<br/>资源 chunks 索引")]
         EMB["🧠 bge-m3 + bge-reranker-v2<br/>本地推理（CPU/GPU）"]
     end
@@ -56,7 +57,7 @@ flowchart TB
 
     class Vue client;
     class API api;
-    class A1,A2,A3 agent;
+    class A1,A2,A3,A4 agent;
     class ORM,RAGSV svc;
     class DB,VEC,EMB data;
     class LLM ext;
