@@ -1,3 +1,4 @@
+import logging
 import random
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -11,6 +12,8 @@ from sqlalchemy.orm import Session
 from . import models, schemas
 from .agents import build_diagnose_graph, build_optimize_graph
 from .database import get_db, init_db
+
+logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _WEB_DIR = _PROJECT_ROOT / "web"
@@ -150,55 +153,62 @@ def diagnose(payload: schemas.DiagnoseRequest, db: Session = Depends(get_db)):
         "available_minutes_per_day": student.available_minutes_per_day,
     }
 
-    result = _DIAGNOSE_GRAPH.invoke(
-        {
-            "student_id": payload.student_id,
-            "student_profile": profile,
-            "answers": [a.model_dump() for a in payload.answers],
-            "reasoning": [],
-            "used_mock": False,
-        }
-    )
-    mastery = result.get("mastery", {})
-    path = result.get("path", [])
-    reasoning = result.get("reasoning", [])
-    used_mock = result.get("used_mock", False)
-    evaluation = result.get("evaluation") or None
-
-    db.add(
-        models.MasterySnapshot(
-            student_id=payload.student_id,
-            mastery=mastery,
-            reasoning=reasoning,
-            is_mock=used_mock,
+    try:
+        result = _DIAGNOSE_GRAPH.invoke(
+            {
+                "student_id": payload.student_id,
+                "student_profile": profile,
+                "answers": [a.model_dump() for a in payload.answers],
+                "reasoning": [],
+                "used_mock": False,
+            }
         )
-    )
-    _upsert_learning_path(db, payload.student_id, path, reasoning, used_mock)
+        mastery = result.get("mastery", {})
+        path = result.get("path", [])
+        reasoning = result.get("reasoning", [])
+        used_mock = result.get("used_mock", False)
+        evaluation = result.get("evaluation") or None
 
-    evaluation_out = None
-    if evaluation:
-        # 留痕:每次诊断写一行评价历史
         db.add(
-            models.PlanEvaluation(
+            models.MasterySnapshot(
                 student_id=payload.student_id,
-                score=evaluation["score"],
-                scores=evaluation.get("scores", {}),
-                strengths=evaluation.get("strengths"),
-                improvements=evaluation.get("improvements"),
-                summary=evaluation.get("summary"),
+                mastery=mastery,
+                reasoning=reasoning,
                 is_mock=used_mock,
             )
         )
-        evaluation_out = schemas.EvaluationOut(
-            score=evaluation["score"],
-            scores=schemas.EvaluationScores(**evaluation.get("scores", {})),
-            strengths=evaluation.get("strengths"),
-            improvements=evaluation.get("improvements"),
-            summary=evaluation.get("summary"),
-            mock=used_mock,
-        )
+        _upsert_learning_path(db, payload.student_id, path, reasoning, used_mock)
 
-    db.commit()
+        evaluation_out = None
+        if evaluation:
+            db.add(
+                models.PlanEvaluation(
+                    student_id=payload.student_id,
+                    score=evaluation["score"],
+                    scores=evaluation.get("scores", {}),
+                    strengths=evaluation.get("strengths"),
+                    improvements=evaluation.get("improvements"),
+                    summary=evaluation.get("summary"),
+                    is_mock=used_mock,
+                )
+            )
+            evaluation_out = schemas.EvaluationOut(
+                score=evaluation["score"],
+                scores=schemas.EvaluationScores(**evaluation.get("scores", {})),
+                strengths=evaluation.get("strengths"),
+                improvements=evaluation.get("improvements"),
+                summary=evaluation.get("summary"),
+                mock=used_mock,
+            )
+
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("diagnose failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"diagnose 内部错误: {e}") from e
 
     return schemas.DiagnoseResponse(
         student_id=payload.student_id,
@@ -228,30 +238,37 @@ def post_interaction(event: schemas.InteractionEvent, db: Session = Depends(get_
     if row is None:
         raise HTTPException(status_code=404, detail="no path; run /diagnose first")
 
-    db.add(
-        models.Interaction(
-            student_id=event.student_id,
-            event=event.event,
-            concept_code=event.concept_id,
-            detail=event.detail,
+    try:
+        db.add(
+            models.Interaction(
+                student_id=event.student_id,
+                event=event.event,
+                concept_code=event.concept_id,
+                detail=event.detail,
+            )
         )
-    )
+        result = _OPTIMIZE_GRAPH.invoke(
+            {
+                "student_id": event.student_id,
+                "path": row.path or [],
+                "interaction": event.model_dump(),
+                "reasoning": [],
+                "used_mock": False,
+            }
+        )
+        path = result.get("path", [])
+        reasoning = result.get("reasoning", [])
+        used_mock = result.get("used_mock", False)
 
-    result = _OPTIMIZE_GRAPH.invoke(
-        {
-            "student_id": event.student_id,
-            "path": row.path or [],
-            "interaction": event.model_dump(),
-            "reasoning": [],
-            "used_mock": False,
-        }
-    )
-    path = result.get("path", [])
-    reasoning = result.get("reasoning", [])
-    used_mock = result.get("used_mock", False)
-
-    _upsert_learning_path(db, event.student_id, path, reasoning, used_mock)
-    db.commit()
+        _upsert_learning_path(db, event.student_id, path, reasoning, used_mock)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("interaction failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"interaction 内部错误: {e}") from e
 
     return schemas.InteractionResponse(
         student_id=event.student_id,

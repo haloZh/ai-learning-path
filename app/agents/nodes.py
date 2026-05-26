@@ -9,6 +9,43 @@ from .state import AgentState, PathItem
 logger = logging.getLogger(__name__)
 
 
+# ===== 防御工具 =====
+
+
+def _get_valid_codes() -> set[str]:
+    """从 db 取所有合法 concept_code(作 LLM 输出去幻觉用)。"""
+    from app.database import SessionLocal
+    from app.models import Concept
+
+    with SessionLocal() as db:
+        return {c.code for c in db.query(Concept).all()}
+
+
+def _clip(value: float, lo: float, hi: float) -> float:
+    """把 value 限制到 [lo, hi]。"""
+    return max(lo, min(hi, value))
+
+
+def _normalize_concept_id(cid: str, valid: set[str]) -> str | None:
+    """LLM 可能编造不存在的 concept_id;先精确匹配,再尝试最长公共前缀。"""
+    if not cid:
+        return None
+    if cid in valid:
+        return cid
+    best, best_len = None, 0
+    for v in valid:
+        prefix_len = 0
+        for a, b in zip(cid, v):
+            if a != b:
+                break
+            prefix_len += 1
+        if prefix_len > best_len and prefix_len >= 4:
+            best, best_len = v, prefix_len
+    if best:
+        logger.info("concept_id 模糊匹配:%r → %r", cid, best)
+    return best
+
+
 # ===== mock 兜底逻辑(LLM 不可用时启用) =====
 
 
@@ -90,9 +127,9 @@ def _mock_evaluate(
     return {
         "score": total,
         "scores": scores,
-        "strengths": "(mock) 路径覆盖薄弱知识点",
-        "improvements": "(mock) 个性化与资源匹配度无法精细评估",
-        "summary": "(mock) 本地启发式评分,LLM 不可用",
+        "strengths": "路径覆盖薄弱知识点",
+        "improvements": "个性化与资源匹配维度暂未精细评估",
+        "summary": "由本地启发式策略评分(LLM 暂不可用)",
     }
 
 
@@ -104,15 +141,30 @@ def diagnose_node(state: AgentState) -> AgentState:
     profile = state.get("student_profile", {}) or {}
     reasoning = list(state.get("reasoning", []))
     used_mock = state.get("used_mock", False)
+    valid_codes = _get_valid_codes()
 
     try:
         result = chat_json(
             prompts.DIAGNOSE_SYSTEM,
             prompts.diagnose_user(profile, answers),
         )
-        mastery = {str(k): float(v) for k, v in result.get("mastery", {}).items()}
+        # 校验 + clip:LLM 偶尔输出不存在的 concept_id 或越界 mastery
+        raw = result.get("mastery", {})
+        mastery: dict[str, float] = {}
+        dropped = 0
+        for k, v in raw.items():
+            cid = _normalize_concept_id(str(k), valid_codes)
+            if cid is None:
+                dropped += 1
+                continue
+            try:
+                mastery[cid] = round(_clip(float(v), 0.0, 1.0), 2)
+            except (TypeError, ValueError):
+                dropped += 1
         if not mastery:
-            raise LLMUnavailable("LLM 返回 mastery 为空")
+            raise LLMUnavailable("LLM 返回 mastery 为空或全部无效")
+        if dropped:
+            reasoning.append(f"[diagnose] 已丢弃 {dropped} 个无效 concept 项")
         reasoning.append(f"[diagnose] LLM: {result.get('summary', '').strip()}")
     except LLMUnavailable as e:
         logger.info("diagnose fallback to mock: %s", e)
@@ -147,6 +199,23 @@ def _retrieve_resource_pool(mastery: dict[str, float]) -> dict[str, list[dict]]:
     return pool
 
 
+def _get_prerequisites_for(codes: set[str]) -> dict[str, list[str]]:
+    """取 codes 涉及的 concept 的先修关系字典(只返回非空的)。"""
+    if not codes:
+        return {}
+    from app.database import SessionLocal
+    from app.models import Concept
+
+    out: dict[str, list[str]] = {}
+    with SessionLocal() as db:
+        rows = db.query(Concept).filter(Concept.code.in_(codes)).all()
+        for c in rows:
+            pre = c.prerequisite_codes or []
+            if pre:
+                out[c.code] = pre
+    return out
+
+
 def plan_node(state: AgentState) -> AgentState:
     mastery = state.get("mastery", {})
     profile = state.get("student_profile", {}) or {}
@@ -159,23 +228,40 @@ def plan_node(state: AgentState) -> AgentState:
             f"[plan] RAG 检索命中 {sum(len(v) for v in resource_pool.values())} 条候选资源"
         )
 
+    valid_codes = _get_valid_codes()
+    # 把诊断涉及的 concept 及其先修关系喂给 LLM,让"先修拓扑排序"真用知识图谱
+    prerequisites = _get_prerequisites_for(set(mastery.keys()))
+    if prerequisites:
+        reasoning.append(
+            f"[plan] 注入 {len(prerequisites)} 条先修关系(知识图谱)"
+        )
     try:
         result = chat_json(
             prompts.PLAN_SYSTEM,
-            prompts.plan_user(profile, mastery, resource_pool),
+            prompts.plan_user(profile, mastery, resource_pool, prerequisites),
         )
         raw_path = result.get("path", [])
-        path: list[PathItem] = [
-            {
-                "concept_id": str(p["concept_id"]),
-                "title": str(p["title"]),
-                "estimated_minutes": int(p["estimated_minutes"]),
-                "reason": str(p["reason"]),
-            }
-            for p in raw_path
-        ]
+        path: list[PathItem] = []
+        dropped = 0
+        for p in raw_path:
+            cid = _normalize_concept_id(str(p.get("concept_id", "")), valid_codes)
+            if cid is None:
+                dropped += 1
+                continue
+            try:
+                mins = int(_clip(int(p.get("estimated_minutes", 30)), 5, 120))
+            except (TypeError, ValueError):
+                mins = 30
+            path.append({
+                "concept_id": cid,
+                "title": str(p.get("title", "")).strip() or f"知识点 {cid} 学习",
+                "estimated_minutes": mins,
+                "reason": str(p.get("reason", "")).strip(),
+            })
         if not path:
-            raise LLMUnavailable("LLM 返回 path 为空")
+            raise LLMUnavailable("LLM 返回 path 为空或全部无效")
+        if dropped:
+            reasoning.append(f"[plan] 已丢弃 {dropped} 个无效 concept 项")
         reasoning.append(f"[plan] LLM: {result.get('summary', '').strip()}")
     except (LLMUnavailable, KeyError, TypeError, ValueError) as e:
         logger.info("plan fallback to mock: %s", e)
@@ -210,8 +296,13 @@ def evaluate_node(state: AgentState) -> AgentState:
             prompts.EVALUATE_SYSTEM,
             prompts.evaluate_user(profile, mastery, path, resource_pool),
         )
-        score = int(result.get("score", 0))
-        scores = {str(k): int(v) for k, v in result.get("scores", {}).items()}
+        score = int(_clip(int(result.get("score", 0)), 0, 100))
+        scores: dict[str, int] = {}
+        for k, v in result.get("scores", {}).items():
+            try:
+                scores[str(k)] = int(_clip(int(v), 0, 10))
+            except (TypeError, ValueError):
+                continue
         if not scores or score <= 0:
             raise LLMUnavailable("LLM 返回评分缺失或为 0")
         evaluation = {
@@ -240,6 +331,7 @@ def optimize_node(state: AgentState) -> AgentState:
     current_path = list(state.get("path", []))
     reasoning = list(state.get("reasoning", []))
     used_mock = state.get("used_mock", False)
+    valid_codes = _get_valid_codes()
 
     try:
         result = chat_json(
@@ -247,17 +339,27 @@ def optimize_node(state: AgentState) -> AgentState:
             prompts.optimize_user(current_path, interaction),
         )
         raw_path = result.get("path", [])
-        path: list[PathItem] = [
-            {
-                "concept_id": str(p["concept_id"]),
-                "title": str(p["title"]),
-                "estimated_minutes": int(p["estimated_minutes"]),
-                "reason": str(p["reason"]),
-            }
-            for p in raw_path
-        ]
+        path: list[PathItem] = []
+        dropped = 0
+        for p in raw_path:
+            cid = _normalize_concept_id(str(p.get("concept_id", "")), valid_codes)
+            if cid is None:
+                dropped += 1
+                continue
+            try:
+                mins = int(_clip(int(p.get("estimated_minutes", 30)), 5, 120))
+            except (TypeError, ValueError):
+                mins = 30
+            path.append({
+                "concept_id": cid,
+                "title": str(p.get("title", "")).strip() or f"知识点 {cid} 学习",
+                "estimated_minutes": mins,
+                "reason": str(p.get("reason", "")).strip(),
+            })
         if not path:
-            raise LLMUnavailable("LLM 返回 path 为空")
+            raise LLMUnavailable("LLM 返回 path 为空或全部无效")
+        if dropped:
+            reasoning.append(f"[optimize] 已丢弃 {dropped} 个无效 concept 项")
         reasoning.append(f"[optimize] LLM: {result.get('summary', '').strip()}")
     except (LLMUnavailable, KeyError, TypeError, ValueError) as e:
         logger.info("optimize fallback to mock: %s", e)
