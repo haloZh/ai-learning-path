@@ -208,7 +208,7 @@ def diagnose(payload: schemas.DiagnoseRequest, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         logger.exception("diagnose failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"diagnose 内部错误: {e}") from e
+        raise HTTPException(status_code=500, detail="diagnose 内部错误,请稍后重试") from e
 
     return schemas.DiagnoseResponse(
         student_id=payload.student_id,
@@ -268,7 +268,7 @@ def post_interaction(event: schemas.InteractionEvent, db: Session = Depends(get_
     except Exception as e:
         db.rollback()
         logger.exception("interaction failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"interaction 内部错误: {e}") from e
+        raise HTTPException(status_code=500, detail="interaction 内部错误,请稍后重试") from e
 
     return schemas.InteractionResponse(
         student_id=event.student_id,

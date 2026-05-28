@@ -32,15 +32,11 @@
       </n-space>
     </n-card>
 
-    <div v-if="store.questions.length" ref="questionsEl" style="margin-top: 14px">
+    <div v-show="store.questions.length" ref="questionsEl" style="margin-top: 14px">
       <div
         v-for="(item, idx) in store.questions"
         :key="item.q.id"
-        :class="[
-          'q-card',
-          item.answer === 'right' && 'answered-right',
-          item.answer === 'wrong' && 'answered-wrong',
-        ]"
+        :class="['q-card', item.selected && 'answered']"
       >
         <div class="q-meta">
           <n-tag size="small" type="info" round>Q{{ idx + 1 }}</n-tag>
@@ -48,36 +44,25 @@
           <n-tag size="small" :bordered="false" :type="diffType(item.q.difficulty)">
             难度 {{ item.q.difficulty }}
           </n-tag>
-          <n-tag size="small" :bordered="false" type="success">
-            标准答案 {{ item.q.answer || '(主观)' }}
-          </n-tag>
         </div>
         <div class="q-stem" v-html="item.q.stem"></div>
         <div class="q-choices">
-          <span v-for="(v, k) in item.q.choices" :key="k" class="q-choice">
-            <b>{{ k }}.</b> {{ v }}
-          </span>
-        </div>
-        <div class="q-actions">
-          <span class="label">我答得:</span>
-          <n-button
-            size="small"
-            :type="item.answer === 'right' ? 'success' : 'default'"
-            :ghost="item.answer !== 'right'"
-            @click="item.answer = 'right'"
-          >✓ 对</n-button>
-          <n-button
-            size="small"
-            :type="item.answer === 'wrong' ? 'error' : 'default'"
-            :ghost="item.answer !== 'wrong'"
-            @click="item.answer = 'wrong'"
-          >✗ 错</n-button>
+          <button
+            v-for="c in normalizeChoices(item.q.choices)"
+            :key="c.key"
+            type="button"
+            class="q-choice"
+            :class="{ selected: item.selected === c.key }"
+            @click="item.selected = c.key"
+          >
+            <b>{{ c.key }}.</b> {{ c.text }}
+          </button>
         </div>
       </div>
 
       <n-space justify="end" align="center" style="margin-top: 18px">
         <n-text depth="3" style="font-size: 13px">
-          已标记 {{ answeredCount }} / {{ store.questions.length }}
+          已作答 {{ answeredCount }} / {{ store.questions.length }}
         </n-text>
         <n-button
           type="primary"
@@ -110,20 +95,38 @@ const questionsEl = ref(null)
 const totalQuestions = ref(389)  // 仅展示用
 
 const answeredCount = computed(() =>
-  store.questions.filter((it) => it.answer !== null && it.answer !== undefined).length,
+  store.questions.filter((it) => !!it.selected).length,
 )
 
 function diffType(d) {
+  if (d == null) return 'default'
   if (d <= 1) return 'success'
   if (d <= 3) return 'info'
   return 'error'
+}
+
+function normalizeChoices(raw) {
+  if (!raw) return []
+  if (Array.isArray(raw)) {
+    return raw.map((text, i) => ({
+      key: String.fromCharCode(65 + i), // A/B/C/D/E
+      text: String(text ?? ''),
+    }))
+  }
+  if (typeof raw === 'object') {
+    return Object.entries(raw).map(([key, text]) => ({
+      key,
+      text: String(text ?? ''),
+    }))
+  }
+  return []
 }
 
 async function onSample() {
   loading.value = true
   try {
     const list = await api.sampleQuestions(n.value)
-    store.questions = list.map((q) => ({ q, answer: null }))
+    store.questions = list.map((q) => ({ q, selected: null }))
     await nextTick()
     renderKatex(questionsEl.value)
   } catch (e) {
@@ -135,11 +138,11 @@ async function onSample() {
 
 async function onSubmit() {
   diagnosing.value = true
-  const answered = store.questions.filter((it) => it.answer !== null && it.answer !== undefined)
+  const answered = store.questions.filter((it) => !!it.selected)
   const answers = answered.map((it) => ({
     question_id: it.q.id,
     concept_id: it.q.concept_code,
-    correct: it.answer === 'right',
+    correct: it.selected === it.q.answer,
     seconds: 60,
   }))
   try {

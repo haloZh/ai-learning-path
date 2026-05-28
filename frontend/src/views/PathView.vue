@@ -26,13 +26,44 @@
         }}
       </n-alert>
 
+      <div v-if="evaluation" class="evaluation-card">
+        <div class="eval-head">
+          <span class="eval-title">📊 路径质量评分</span>
+          <span class="eval-score" :class="scoreClass(evaluation.score)">
+            {{ evaluation.score }}<small>/100</small>
+          </span>
+        </div>
+        <div class="eval-grid">
+          <div v-for="(label, key) in EVAL_KEYS" :key="key" class="eval-item">
+            <span class="eval-label">{{ label }}</span>
+            <span class="eval-bar">
+              <span
+                :style="{ width: ((evaluation.scores?.[key] ?? 0) * 10) + '%' }"
+                :class="scoreSubClass(evaluation.scores?.[key])"
+              ></span>
+            </span>
+            <span class="eval-num">{{ evaluation.scores?.[key] ?? '-' }}</span>
+          </div>
+        </div>
+        <div v-if="evaluation.summary" class="eval-summary">📝 {{ evaluation.summary }}</div>
+        <div v-if="evaluation.strengths" class="eval-line eval-strength">
+          <b>亮点:</b> {{ evaluation.strengths }}
+        </div>
+        <div v-if="evaluation.improvements" class="eval-line eval-improve">
+          <b>待改进:</b> {{ evaluation.improvements }}
+        </div>
+      </div>
+
       <div class="section-title">🩺 知识点掌握度</div>
       <div>
         <div v-for="[code, val] in masteryEntries" :key="code" class="mastery-row">
           <span class="code">{{ code }}</span>
-          <span class="val">{{ val.toFixed(2) }}</span>
+          <span class="val">{{ Number(val ?? 0).toFixed(2) }}</span>
           <span class="bar">
-            <span :class="masteryClass(val)" :style="{ width: (val * 100).toFixed(0) + '%' }"></span>
+            <span
+              :class="masteryClass(val ?? 0)"
+              :style="{ width: (Math.max(0, Math.min(1, Number(val ?? 0))) * 100).toFixed(0) + '%' }"
+            ></span>
           </span>
         </div>
       </div>
@@ -68,25 +99,58 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { store } from '../store'
 import { renderKatex } from '../utils/katex'
 
 const pathEl = ref(null)
 
+const EVAL_KEYS = {
+  targeting: '针对性',
+  ordering: '顺序合理性',
+  feasibility: '可行性',
+  personalization: '个性化',
+  resource_match: '资源匹配',
+}
+
 const masteryEntries = computed(() => {
   const m = store.diagnoseResult?.mastery || {}
-  return Object.entries(m).sort((a, b) => a[1] - b[1])
+  return Object.entries(m).sort((a, b) => (a[1] ?? 0) - (b[1] ?? 0))
 })
 
+const evaluation = computed(() => store.diagnoseResult?.evaluation || null)
+
 function masteryClass(v) {
-  if (v < 0.4) return 'low'
-  if (v < 0.7) return 'mid'
+  const x = Number(v ?? 0)
+  if (x < 0.4) return 'low'
+  if (x < 0.7) return 'mid'
   return 'high'
 }
 
-onMounted(async () => {
+function scoreClass(score) {
+  if (score == null) return ''
+  if (score >= 80) return 'score-high'
+  if (score >= 60) return 'score-mid'
+  return 'score-low'
+}
+
+function scoreSubClass(v) {
+  if (v == null) return ''
+  if (v >= 8) return 'high'
+  if (v >= 5) return 'mid'
+  return 'low'
+}
+
+async function rerender() {
   await nextTick()
   renderKatex(pathEl.value)
-})
+}
+
+onMounted(rerender)
+
+watch(
+  () => store.diagnoseResult?.path,
+  () => { rerender() },
+  { deep: false },
+)
 </script>

@@ -9,8 +9,17 @@ async function request(method, path, body) {
   }
   const r = await fetch(BASE + path, opts)
   if (!r.ok) {
-    const text = await r.text().catch(() => '')
-    throw new Error(text || r.statusText)
+    let detail = r.statusText
+    const raw = await r.text().catch(() => '')
+    if (raw) {
+      try {
+        const j = JSON.parse(raw)
+        detail = j.detail || j.message || raw
+      } catch {
+        detail = raw
+      }
+    }
+    throw new Error(`${r.status} ${detail}`)
   }
   return r.json()
 }

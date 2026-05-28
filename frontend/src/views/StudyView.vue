@@ -142,31 +142,46 @@ onMounted(async () => {
 
 async function onSubmit() {
   submitting.value = true
+  let res
   try {
-    const oldTitles = new Set(store.diagnoseResult.path.map((p) => p.title))
-    const res = await api.postInteraction({
+    // 用 concept_id+title 组合 key 标识旧项;LLM 可能会重写 title,但同 concept 下视为同节点
+    const oldKeys = new Set(
+      (store.diagnoseResult.path || []).map((p) => `${p.concept_id}::${p.title}`),
+    )
+    res = await api.postInteraction({
       student_id: store.studentId,
       event: form.event,
       concept_id: form.concept_id,
       detail: form.detail || null,
     })
     const newSet = new Set()
-    res.path.forEach((p, i) => {
-      if (!oldTitles.has(p.title)) newSet.add(i)
+    ;(res.path || []).forEach((p, i) => {
+      const k = `${p.concept_id}::${p.title}`
+      if (!oldKeys.has(k)) newSet.add(i)
     })
     newIndices.value = newSet
-    store.diagnoseResult.path = res.path
+    store.diagnoseResult.path = res.path || []
     if (res.reasoning) {
+      if (!Array.isArray(store.diagnoseResult.reasoning)) {
+        store.diagnoseResult.reasoning = []
+      }
       res.reasoning.forEach((line) => {
         store.diagnoseResult.reasoning.push('[interaction] ' + line)
       })
     }
     lastUpdate.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
     message.success(res.mock ? '已用 mock 兜底' : `路径已更新 (新增 ${newSet.size} 项)`)
+  } catch (e) {
+    console.error('postInteraction failed:', e)
+    message.error('提交失败: ' + e.message)
+    submitting.value = false
+    return
+  }
+  try {
     await nextTick()
     renderKatex(pathEl.value)
   } catch (e) {
-    message.error('提交失败: ' + e.message)
+    console.warn('renderKatex skipped:', e)
   } finally {
     submitting.value = false
   }

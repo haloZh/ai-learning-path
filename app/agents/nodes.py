@@ -150,6 +150,8 @@ def diagnose_node(state: AgentState) -> AgentState:
         )
         # 校验 + clip:LLM 偶尔输出不存在的 concept_id 或越界 mastery
         raw = result.get("mastery", {})
+        if not isinstance(raw, dict):
+            raise LLMUnavailable(f"LLM 返回 mastery 非 dict: {type(raw).__name__}")
         mastery: dict[str, float] = {}
         dropped = 0
         for k, v in raw.items():
@@ -166,7 +168,7 @@ def diagnose_node(state: AgentState) -> AgentState:
         if dropped:
             reasoning.append(f"[diagnose] 已丢弃 {dropped} 个无效 concept 项")
         reasoning.append(f"[diagnose] LLM: {result.get('summary', '').strip()}")
-    except LLMUnavailable as e:
+    except (LLMUnavailable, AttributeError, TypeError, ValueError) as e:
         logger.info("diagnose fallback to mock: %s", e)
         mastery, summary = _mock_diagnose(answers)
         reasoning.append(f"[diagnose] mock 兜底({e}): {summary}")
@@ -176,27 +178,38 @@ def diagnose_node(state: AgentState) -> AgentState:
 
 
 def _retrieve_resource_pool(mastery: dict[str, float]) -> dict[str, list[dict]]:
-    """对掌握度低的前若干个 concept 各检索 top-3 资源,组成 LLM 候选池。"""
-    from .rag import get_rag
+    """对掌握度低的前若干个 concept 各检索 top-3 资源,组成 LLM 候选池。
 
+    RAG 不可用时返回空 dict,不阻塞 plan_node。
+    """
     if not mastery:
         return {}
-    weak_first = sorted(mastery.items(), key=lambda kv: kv[1])[:6]
-    rag = get_rag()
-    pool: dict[str, list[dict]] = {}
-    for cid, score in weak_first:
-        hits = rag.retrieve(cid, query=cid, k=3)
-        if hits:
-            pool[cid] = [
-                {
-                    "title": h.get("title", ""),
-                    "type": h.get("type", ""),
-                    "estimated_minutes": h.get("estimated_minutes", 0),
-                    "url": h.get("url", ""),
-                }
-                for h in hits
-            ]
-    return pool
+    try:
+        from .rag import RagUnavailable, get_rag
+
+        rag = get_rag()
+        weak_first = sorted(mastery.items(), key=lambda kv: kv[1])[:6]
+        pool: dict[str, list[dict]] = {}
+        for cid, _score in weak_first:
+            try:
+                hits = rag.retrieve(cid, query=cid, k=3)
+            except RagUnavailable as e:
+                logger.info("rag unavailable for %s: %s", cid, e)
+                return {}
+            if hits:
+                pool[cid] = [
+                    {
+                        "title": h.get("title", ""),
+                        "type": h.get("type", ""),
+                        "estimated_minutes": h.get("estimated_minutes", 0),
+                        "url": h.get("url", ""),
+                    }
+                    for h in hits
+                ]
+        return pool
+    except Exception as e:
+        logger.warning("resource pool retrieval failed: %s", e)
+        return {}
 
 
 def _get_prerequisites_for(codes: set[str]) -> dict[str, list[str]]:
@@ -241,9 +254,14 @@ def plan_node(state: AgentState) -> AgentState:
             prompts.plan_user(profile, mastery, resource_pool, prerequisites),
         )
         raw_path = result.get("path", [])
+        if not isinstance(raw_path, list):
+            raise LLMUnavailable(f"LLM 返回 path 非 list: {type(raw_path).__name__}")
         path: list[PathItem] = []
         dropped = 0
         for p in raw_path:
+            if not isinstance(p, dict):
+                dropped += 1
+                continue
             cid = _normalize_concept_id(str(p.get("concept_id", "")), valid_codes)
             if cid is None:
                 dropped += 1
@@ -297,8 +315,11 @@ def evaluate_node(state: AgentState) -> AgentState:
             prompts.evaluate_user(profile, mastery, path, resource_pool),
         )
         score = int(_clip(int(result.get("score", 0)), 0, 100))
+        raw_scores = result.get("scores", {})
+        if not isinstance(raw_scores, dict):
+            raise LLMUnavailable(f"LLM 返回 scores 非 dict: {type(raw_scores).__name__}")
         scores: dict[str, int] = {}
-        for k, v in result.get("scores", {}).items():
+        for k, v in raw_scores.items():
             try:
                 scores[str(k)] = int(_clip(int(v), 0, 10))
             except (TypeError, ValueError):
@@ -339,9 +360,14 @@ def optimize_node(state: AgentState) -> AgentState:
             prompts.optimize_user(current_path, interaction),
         )
         raw_path = result.get("path", [])
+        if not isinstance(raw_path, list):
+            raise LLMUnavailable(f"LLM 返回 path 非 list: {type(raw_path).__name__}")
         path: list[PathItem] = []
         dropped = 0
         for p in raw_path:
+            if not isinstance(p, dict):
+                dropped += 1
+                continue
             cid = _normalize_concept_id(str(p.get("concept_id", "")), valid_codes)
             if cid is None:
                 dropped += 1

@@ -112,13 +112,9 @@ html, body {
 .q-card:hover {
   box-shadow: 0 4px 18px rgba(255, 152, 0, 0.1);
 }
-.q-card.answered-right {
-  background: #f1f8e9;
-  border-color: #aed581;
-}
-.q-card.answered-wrong {
-  background: #ffebee;
-  border-color: #ef9a9a;
+.q-card.answered {
+  background: #fff8e1;
+  border-color: #ffd180;
 }
 .q-card .q-meta {
   display: flex;
@@ -136,24 +132,121 @@ html, body {
 .q-card .q-choices {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px 16px;
+  gap: 8px 16px;
+  margin-bottom: 4px;
+}
+.q-card .q-choice {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 12px;
   font-size: 13.5px;
   color: #555;
-  margin-bottom: 12px;
+  text-align: left;
+  background: #fafafa;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.q-card .q-choice:hover {
+  background: #fff3e0;
+  border-color: #ffcc80;
+}
+.q-card .q-choice.selected {
+  background: #ff9800;
+  border-color: #fb8c00;
+  color: #fff;
 }
 .q-card .q-choice b {
   color: #ff9800;
-  margin-right: 4px;
+  margin-right: 2px;
 }
-.q-card .q-actions {
+.q-card .q-choice.selected b {
+  color: #fff;
+}
+
+/* === 评价卡片 === */
+.evaluation-card {
+  background: linear-gradient(135deg, #fff8e1 0%, #fff3e0 100%);
+  border: 1px solid #ffe0b2;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 18px;
+}
+.evaluation-card .eval-head {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
 }
-.q-card .q-actions .label {
+.evaluation-card .eval-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #e65100;
+}
+.evaluation-card .eval-score {
+  font-size: 28px;
+  font-weight: 700;
+  font-family: 'SF Mono', ui-monospace, monospace;
+}
+.evaluation-card .eval-score small {
+  font-size: 14px;
+  font-weight: 400;
   color: #888;
+}
+.evaluation-card .eval-score.score-high { color: #2e7d32; }
+.evaluation-card .eval-score.score-mid  { color: #f57c00; }
+.evaluation-card .eval-score.score-low  { color: #c62828; }
+.evaluation-card .eval-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px 18px;
+  margin-bottom: 12px;
+}
+.evaluation-card .eval-item {
+  display: grid;
+  grid-template-columns: 80px 1fr 28px;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
 }
+.evaluation-card .eval-label { color: #555; }
+.evaluation-card .eval-bar {
+  background: rgba(0, 0, 0, 0.06);
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.evaluation-card .eval-bar > span {
+  display: block;
+  height: 100%;
+  transition: width 0.5s ease;
+}
+.evaluation-card .eval-bar > .low  { background: #ef5350; }
+.evaluation-card .eval-bar > .mid  { background: #ffb300; }
+.evaluation-card .eval-bar > .high { background: #66bb6a; }
+.evaluation-card .eval-num {
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 12px;
+  color: #666;
+  text-align: right;
+}
+.evaluation-card .eval-summary {
+  font-size: 13px;
+  color: #444;
+  margin-top: 4px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 6px;
+}
+.evaluation-card .eval-line {
+  font-size: 12.5px;
+  color: #555;
+  margin-top: 6px;
+  line-height: 1.5;
+}
+.evaluation-card .eval-line b { color: #e65100; }
 
 /* === 掌握度条 === */
 .mastery-row {

@@ -23,11 +23,7 @@
         </div>
 
         <main class="main">
-          <router-view v-slot="{ Component }">
-            <transition name="fade" mode="out-in">
-              <component :is="Component" />
-            </transition>
-          </router-view>
+          <router-view />
         </main>
 
         <footer class="footer">
