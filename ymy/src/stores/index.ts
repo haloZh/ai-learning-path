@@ -1,11 +1,47 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-import type { ProfileResponse, Question, Concept, PathItem, DiagnoseResponse, InteractionResponse } from '@/types'
+import { ref, computed, watch } from 'vue'
+import type { ProfileResponse, Question, Concept, PathItem, Evaluation } from '@/types'
 import * as api from '@/api/endpoints'
 
+// sessionStorage 持久化工具:刷新页面不丢学生 + 诊断 + 路径
+const SS_KEY = 'lp:state:v1'
+
+interface PersistedState {
+  studentId?: number | null
+  profile?: ProfileResponse | null
+  mastery?: Record<string, number>
+  path?: PathItem[]
+  reasoning?: string[]
+  isMock?: boolean
+  isSubmitted?: boolean
+  evaluation?: Evaluation | null
+}
+
+function loadPersisted(): PersistedState {
+  try {
+    const raw = sessionStorage.getItem(SS_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+function savePersisted(patch: PersistedState) {
+  try {
+    const cur = loadPersisted()
+    sessionStorage.setItem(SS_KEY, JSON.stringify({ ...cur, ...patch }))
+  } catch {}
+}
+
+export function clearPersisted() {
+  try { sessionStorage.removeItem(SS_KEY) } catch {}
+}
+
+const persisted = loadPersisted()
+
 export const useStudentStore = defineStore('student', () => {
-  const profile = ref<ProfileResponse | null>(null)
-  const studentId = ref<number | null>(null)
+  const profile = ref<ProfileResponse | null>(persisted.profile || null)
+  const studentId = ref<number | null>(persisted.studentId || null)
   const isProfileComplete = computed(() => !!profile.value)
 
   async function createProfile(data: any) {
@@ -22,19 +58,23 @@ export const useStudentStore = defineStore('student', () => {
     return res
   }
 
+  watch([profile, studentId], () => {
+    savePersisted({ profile: profile.value, studentId: studentId.value })
+  })
+
   return { profile, studentId, isProfileComplete, createProfile, fetchProfile }
 })
 
 export const useDiagnoseStore = defineStore('diagnose', () => {
   const questions = ref<Question[]>([])
   const answers = ref<Record<number, string>>({})
-  const answerTimes = ref<Record<number, number>>({})
   const answerStartTimes = ref<Record<number, number>>({})
-  const mastery = ref<Record<string, number>>({})
-  const path = ref<PathItem[]>([])
-  const reasoning = ref<string[]>([])
-  const isMock = ref(false)
-  const isSubmitted = ref(false)
+  const mastery = ref<Record<string, number>>(persisted.mastery || {})
+  const path = ref<PathItem[]>(persisted.path || [])
+  const reasoning = ref<string[]>(persisted.reasoning || [])
+  const evaluation = ref<Evaluation | null>(persisted.evaluation || null)
+  const isMock = ref<boolean>(persisted.isMock || false)
+  const isSubmitted = ref<boolean>(persisted.isSubmitted || false)
   const isLoading = ref(false)
 
   const isDiagnosed = computed(() => Object.keys(mastery.value).length > 0)
@@ -43,20 +83,32 @@ export const useDiagnoseStore = defineStore('diagnose', () => {
     const qs = await api.getSampleQuestions(n)
     questions.value = qs
     answers.value = {}
-    answerTimes.value = {}
     answerStartTimes.value = {}
+    // 进入题目时记开始时间(切题用 startTimer 重置)
+    qs.forEach(q => { answerStartTimes.value[q.id] = Date.now() })
     isSubmitted.value = false
   }
 
   function setAnswer(questionId: number, answer: string) {
     answers.value[questionId] = answer
+  }
+
+  function startTimer(questionId: number) {
     if (!answerStartTimes.value[questionId]) {
       answerStartTimes.value[questionId] = Date.now()
     }
   }
 
-  function startTimer(questionId: number) {
-    answerStartTimes.value[questionId] = Date.now()
+  function reset() {
+    questions.value = []
+    answers.value = {}
+    answerStartTimes.value = {}
+    mastery.value = {}
+    path.value = []
+    reasoning.value = []
+    evaluation.value = null
+    isMock.value = false
+    isSubmitted.value = false
   }
 
   async function submitDiagnose(studentId: number) {
@@ -70,7 +122,7 @@ export const useDiagnoseStore = defineStore('diagnose', () => {
           question_id: q.id,
           concept_id: q.concept_code,
           correct: userAnswer === q.answer,
-          seconds: seconds || 30,
+          seconds: Math.max(1, seconds),
         }
       })
 
@@ -82,6 +134,7 @@ export const useDiagnoseStore = defineStore('diagnose', () => {
       mastery.value = res.mastery
       path.value = res.path
       reasoning.value = res.reasoning
+      evaluation.value = res.evaluation || null
       isMock.value = res.mock
       isSubmitted.value = true
       return res
@@ -90,17 +143,28 @@ export const useDiagnoseStore = defineStore('diagnose', () => {
     }
   }
 
+  watch([mastery, path, reasoning, evaluation, isMock, isSubmitted], () => {
+    savePersisted({
+      mastery: mastery.value,
+      path: path.value,
+      reasoning: reasoning.value,
+      evaluation: evaluation.value,
+      isMock: isMock.value,
+      isSubmitted: isSubmitted.value,
+    })
+  }, { deep: true })
+
   return {
-    questions, answers, mastery, path, reasoning, isMock, isSubmitted, isLoading,
-    isDiagnosed,
-    fetchQuestions, setAnswer, startTimer, submitDiagnose,
+    questions, answers, mastery, path, reasoning, evaluation,
+    isMock, isSubmitted, isLoading, isDiagnosed,
+    fetchQuestions, setAnswer, startTimer, submitDiagnose, reset,
   }
 })
 
 export const usePathStore = defineStore('path', () => {
-  const pathData = ref<PathItem[]>([])
+  const pathData = ref<PathItem[]>(persisted.path || [])
   const concepts = ref<Concept[]>([])
-  const isMock = ref(false)
+  const isMock = ref<boolean>(persisted.isMock || false)
   const isPathGenerated = computed(() => pathData.value.length > 0)
 
   async function fetchPath(studentId: number) {
@@ -131,6 +195,10 @@ export const useLearnStore = defineStore('learn', () => {
   const showAdjustment = ref(false)
   const adjustmentReason = ref('')
   const isLoading = ref(false)
+  // 完成状态:用 concept_id::title 作 key
+  const completedKeys = ref<Set<string>>(new Set())
+  // 用户从路径页点击进入时定位的 idx
+  const initialIdx = ref<number>(0)
 
   async function submitInteraction(studentId: number, event: 'struggle' | 'mastered' | 'skip', conceptId: string, detail: string | null) {
     isLoading.value = true
@@ -152,34 +220,66 @@ export const useLearnStore = defineStore('learn', () => {
     }
   }
 
-  function dismissAdjustment() {
+  // 接受调整:用新路径覆盖
+  function acceptAdjustment() {
     showAdjustment.value = false
     currentPath.value = [...newPath.value]
+  }
+
+  // 拒绝调整:保留旧路径
+  function rejectAdjustment() {
+    showAdjustment.value = false
+    newPath.value = []
   }
 
   function setCurrentPath(data: PathItem[]) {
     currentPath.value = data
   }
 
+  function toggleCompleted(key: string) {
+    const s = new Set(completedKeys.value)
+    if (s.has(key)) s.delete(key)
+    else s.add(key)
+    completedKeys.value = s
+  }
+
+  function isCompleted(key: string) {
+    return completedKeys.value.has(key)
+  }
+
+  function setInitialIdx(i: number) {
+    initialIdx.value = Math.max(0, i)
+  }
+
   return {
     currentPath, newPath, reasoning, isMock, showAdjustment, adjustmentReason, isLoading,
-    submitInteraction, dismissAdjustment, setCurrentPath,
+    completedKeys, initialIdx,
+    submitInteraction, acceptAdjustment, rejectAdjustment, setCurrentPath,
+    toggleCompleted, isCompleted, setInitialIdx,
   }
 })
 
 export const useAssessStore = defineStore('assess', () => {
-  const mastery = ref<Record<string, number>>({})
-  const path = ref<PathItem[]>([])
-  const reasoning = ref<string[]>([])
-  const isMock = ref(false)
+  const mastery = ref<Record<string, number>>(persisted.mastery || {})
+  const path = ref<PathItem[]>(persisted.path || [])
+  const reasoning = ref<string[]>(persisted.reasoning || [])
+  const evaluation = ref<Evaluation | null>(persisted.evaluation || null)
+  const isMock = ref<boolean>(persisted.isMock || false)
   const isLoaded = computed(() => Object.keys(mastery.value).length > 0)
 
-  function setFromDiagnose(m: Record<string, number>, p: PathItem[], r: string[], mock: boolean) {
+  function setFromDiagnose(
+    m: Record<string, number>,
+    p: PathItem[],
+    r: string[],
+    mock: boolean,
+    ev?: Evaluation | null,
+  ) {
     mastery.value = m
     path.value = p
     reasoning.value = r
     isMock.value = mock
+    evaluation.value = ev || null
   }
 
-  return { mastery, path, reasoning, isMock, isLoaded, setFromDiagnose }
+  return { mastery, path, reasoning, evaluation, isMock, isLoaded, setFromDiagnose }
 })

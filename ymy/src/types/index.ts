@@ -60,11 +60,29 @@ export interface PathItem {
   reason: string
 }
 
+export interface EvaluationScores {
+  targeting: number
+  ordering: number
+  feasibility: number
+  personalization: number
+  resource_match: number
+}
+
+export interface Evaluation {
+  score: number
+  scores: EvaluationScores
+  strengths?: string | null
+  improvements?: string | null
+  summary?: string | null
+  mock?: boolean
+}
+
 export interface DiagnoseResponse {
   student_id: number
   mastery: Record<string, number>
   path: PathItem[]
   reasoning: string[]
+  evaluation?: Evaluation | null
   mock: boolean
 }
 
