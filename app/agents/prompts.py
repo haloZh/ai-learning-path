@@ -54,6 +54,23 @@ def plan_user(
     resource_pool: dict | None = None,
     prerequisites: dict[str, list[str]] | None = None,
 ) -> str:
+    # 性能截断:只把最弱的 8 个 concept 喂给 LLM,prompt 短一半,LLM 响应快
+    weak_first = sorted(mastery.items(), key=lambda kv: kv[1])[:8]
+    mastery_trim = {k: v for k, v in weak_first}
+    weak_codes = set(mastery_trim.keys())
+    # prerequisites 也只保留涉及 weak 的
+    pre_trim = (
+        {k: v for k, v in prerequisites.items() if k in weak_codes}
+        if prerequisites else None
+    )
+    # resource_pool 每 concept 最多 2 条,避免 token 膨胀
+    pool_trim = None
+    if resource_pool:
+        pool_trim = {
+            k: (v[:2] if isinstance(v, list) else v)
+            for k, v in resource_pool.items() if k in weak_codes
+        }
+
     payload = {
         "profile": {
             "subject": profile.get("subject"),
@@ -62,16 +79,15 @@ def plan_user(
             "available_minutes_per_day": profile.get("available_minutes_per_day"),
             "learning_goal": profile.get("learning_goal"),
         },
-        "mastery": mastery,
+        "mastery": mastery_trim,
     }
-    if prerequisites:
-        # 把"哪些 concept 先修于哪些 concept"显式喂给 LLM,确保排序合理
-        payload["prerequisites"] = prerequisites
-    if resource_pool:
-        payload["resource_pool"] = resource_pool
+    if pre_trim:
+        payload["prerequisites"] = pre_trim
+    if pool_trim:
+        payload["resource_pool"] = pool_trim
         hint = (
             "学生画像、诊断结果"
-            + ("、知识图谱先修关系" if prerequisites else "")
+            + ("、知识图谱先修关系" if pre_trim else "")
             + "与候选资源池如下,请输出路径 JSON。"
             "注意:① title 应与某条候选资源 title 对齐(尽量直接引用其原标题)"
             ",reason 中可点出为什么选这条资源;"
@@ -80,9 +96,9 @@ def plan_user(
     else:
         hint = (
             "学生画像、诊断结果"
-            + ("、知识图谱先修关系" if prerequisites else "")
+            + ("、知识图谱先修关系" if pre_trim else "")
             + "如下,请输出路径 JSON。"
-            + ("严格遵守 prerequisites 先修在前的顺序约束:\n" if prerequisites else ":\n")
+            + ("严格遵守 prerequisites 先修在前的顺序约束:\n" if pre_trim else ":\n")
         )
     return hint + json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -146,6 +162,15 @@ def evaluate_user(
     path: list[dict],
     resource_pool: dict | None,
 ) -> str:
+    # 性能截断:仅传 path 涉及的 concept 的 mastery + 资源,而非全量
+    path_codes = {p.get("concept_id") for p in path if p.get("concept_id")}
+    mastery_trim = {k: v for k, v in mastery.items() if k in path_codes}
+    pool_trim = None
+    if resource_pool:
+        pool_trim = {
+            k: (v[:2] if isinstance(v, list) else v)
+            for k, v in resource_pool.items() if k in path_codes
+        }
     payload = {
         "profile": {
             "subject": profile.get("subject"),
@@ -154,9 +179,9 @@ def evaluate_user(
             "available_minutes_per_day": profile.get("available_minutes_per_day"),
             "learning_goal": profile.get("learning_goal"),
         },
-        "mastery": mastery,
+        "mastery": mastery_trim,
         "path": path,
-        "resource_pool": resource_pool or {},
+        "resource_pool": pool_trim or {},
     }
     return (
         "学生画像、诊断结果、当前路径、候选资源池如下,请输出评价 JSON:\n"

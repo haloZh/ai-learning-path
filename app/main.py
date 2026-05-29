@@ -13,6 +13,11 @@ from . import models, schemas
 from .agents import build_diagnose_graph, build_optimize_graph
 from .database import get_db, init_db
 
+# 让 app.* 的 logger 在 uvicorn 控制台可见(uvicorn 默认只配 uvicorn.* logger)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -23,9 +28,26 @@ _DIAGNOSE_GRAPH = build_diagnose_graph()
 _OPTIMIZE_GRAPH = build_optimize_graph()
 
 
+def _warmup_rag_sync() -> None:
+    """同步预热 RAG 模型 + Chroma collection,在 startup 后台线程调用。"""
+    import time as _t
+    from .agents.rag import get_rag
+    t0 = _t.perf_counter()
+    try:
+        rag = get_rag()
+        _ = rag.model
+        _ = rag.collection
+        rag.model.encode(["warmup"], show_progress_bar=False)
+        logger.info("⏱ RAG 预热完成 %.0f ms", (_t.perf_counter() - t0) * 1000)
+    except Exception as e:
+        logger.warning("RAG 预热失败(将懒加载兜底): %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    import asyncio
+    asyncio.get_event_loop().run_in_executor(None, _warmup_rag_sync)
     yield
 
 
@@ -33,11 +55,28 @@ app = FastAPI(title="个性化学习路径系统", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost:5174", "http://127.0.0.1:5174",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _log_slow_requests(request, call_next):
+    """大于 1s 的请求打耗时 log,便于排查瓶颈。"""
+    import time as _t
+    t0 = _t.perf_counter()
+    response = await call_next(request)
+    elapsed = (_t.perf_counter() - t0) * 1000
+    if elapsed > 1000:
+        logger.info("⏱ %s %s -> %d %.0f ms",
+                    request.method, request.url.path,
+                    response.status_code, elapsed)
+    return response
 
 if _DIST_DIR.exists():
     # 生产路径:Vue 构建产物。/assets 由 Vite 生成,需直接 serve;SPA 路由由

@@ -4,6 +4,11 @@
 - 单例 RagAdapter,模型与 collection 懒加载;模型未下载时调用方会拿到 RagUnavailable
 - bootstrap_index(db) 把 resources 表全量(或增量)写入 Chroma,返回写入数
 - retrieve(concept_code, query, k=5) 返回元数据列表,索引为空或失败时返回 []
+
+性能:
+- 首次加载 bge-m3 (~2GB) 需 5-15s,且默认会查 huggingface hub 拿元数据,
+  联网慢时整体会到 30-50s。这里强制 HF_HUB_OFFLINE=1 走纯本地缓存,
+  并在 startup 时由 main.lifespan 预热,运行期请求不再触发加载。
 """
 
 from __future__ import annotations
@@ -12,6 +17,11 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
+
+# 强制 hf 离线,只用本地缓存,避免每次启动几十次 HEAD 元数据请求
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
 logger = logging.getLogger(__name__)
 

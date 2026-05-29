@@ -1,12 +1,25 @@
 """三 Agent 节点函数。优先调 LLM,失败时降级到本地启发式 mock。"""
 
 import logging
+import time
+from contextlib import contextmanager
 
 from . import prompts
 from .llm import LLMUnavailable, chat_json
 from .state import AgentState, PathItem
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _timer(name: str):
+    """打节点耗时 log,便于定位性能瓶颈。"""
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = (time.perf_counter() - t0) * 1000
+        logger.info("⏱ [%s] %.0f ms", name, elapsed)
 
 
 # ===== 防御工具 =====
@@ -144,10 +157,11 @@ def diagnose_node(state: AgentState) -> AgentState:
     valid_codes = _get_valid_codes()
 
     try:
-        result = chat_json(
-            prompts.DIAGNOSE_SYSTEM,
-            prompts.diagnose_user(profile, answers),
-        )
+        with _timer("diagnose.llm"):
+            result = chat_json(
+                prompts.DIAGNOSE_SYSTEM,
+                prompts.diagnose_user(profile, answers),
+            )
         # 校验 + clip:LLM 偶尔输出不存在的 concept_id 或越界 mastery
         raw = result.get("mastery", {})
         if not isinstance(raw, dict):
@@ -235,7 +249,8 @@ def plan_node(state: AgentState) -> AgentState:
     reasoning = list(state.get("reasoning", []))
     used_mock = state.get("used_mock", False)
 
-    resource_pool = _retrieve_resource_pool(mastery)
+    with _timer("plan.rag"):
+        resource_pool = _retrieve_resource_pool(mastery)
     if resource_pool:
         reasoning.append(
             f"[plan] RAG 检索命中 {sum(len(v) for v in resource_pool.values())} 条候选资源"
@@ -249,10 +264,11 @@ def plan_node(state: AgentState) -> AgentState:
             f"[plan] 注入 {len(prerequisites)} 条先修关系(知识图谱)"
         )
     try:
-        result = chat_json(
-            prompts.PLAN_SYSTEM,
-            prompts.plan_user(profile, mastery, resource_pool, prerequisites),
-        )
+        with _timer("plan.llm"):
+            result = chat_json(
+                prompts.PLAN_SYSTEM,
+                prompts.plan_user(profile, mastery, resource_pool, prerequisites),
+            )
         raw_path = result.get("path", [])
         if not isinstance(raw_path, list):
             raise LLMUnavailable(f"LLM 返回 path 非 list: {type(raw_path).__name__}")
@@ -310,10 +326,11 @@ def evaluate_node(state: AgentState) -> AgentState:
         return {**state, "evaluation": {}, "reasoning": reasoning, "used_mock": used_mock}
 
     try:
-        result = chat_json(
-            prompts.EVALUATE_SYSTEM,
-            prompts.evaluate_user(profile, mastery, path, resource_pool),
-        )
+        with _timer("evaluate.llm"):
+            result = chat_json(
+                prompts.EVALUATE_SYSTEM,
+                prompts.evaluate_user(profile, mastery, path, resource_pool),
+            )
         score = int(_clip(int(result.get("score", 0)), 0, 100))
         raw_scores = result.get("scores", {})
         if not isinstance(raw_scores, dict):
@@ -355,10 +372,11 @@ def optimize_node(state: AgentState) -> AgentState:
     valid_codes = _get_valid_codes()
 
     try:
-        result = chat_json(
-            prompts.OPTIMIZE_SYSTEM,
-            prompts.optimize_user(current_path, interaction),
-        )
+        with _timer("optimize.llm"):
+            result = chat_json(
+                prompts.OPTIMIZE_SYSTEM,
+                prompts.optimize_user(current_path, interaction),
+            )
         raw_path = result.get("path", [])
         if not isinstance(raw_path, list):
             raise LLMUnavailable(f"LLM 返回 path 非 list: {type(raw_path).__name__}")
