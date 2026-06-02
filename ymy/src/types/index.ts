@@ -58,6 +58,8 @@ export interface PathItem {
   title: string
   estimated_minutes: number
   reason: string
+  resource_url?: string | null
+  resource_type?: string | null
 }
 
 export interface EvaluationScores {
@@ -89,6 +91,8 @@ export interface DiagnoseResponse {
 export interface PathResponse {
   student_id: number
   path: PathItem[]
+  reasoning?: string[]
+  evaluation?: Evaluation | null
   mock: boolean
 }
 
@@ -103,6 +107,7 @@ export interface InteractionResponse {
   student_id: number
   path: PathItem[]
   reasoning: string[]
+  evaluation?: Evaluation | null
   mock: boolean
 }
 

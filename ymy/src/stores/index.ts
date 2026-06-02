@@ -143,6 +143,33 @@ export const useDiagnoseStore = defineStore('diagnose', () => {
     }
   }
 
+  // 评分异步生成,诊断返回时 evaluation 为 null,轮询 GET /path 直到拿到
+  const evaluating = ref(false)
+
+  async function pollEvaluation(studentId: number, maxTries = 20, intervalMs = 2000) {
+    if (evaluation.value) return // 已有则不轮询
+    evaluating.value = true
+    try {
+      for (let i = 0; i < maxTries; i++) {
+        await new Promise(r => setTimeout(r, intervalMs))
+        try {
+          const res = await api.getPath(studentId)
+          if (res.evaluation) {
+            evaluation.value = res.evaluation
+            // 同步给评估看板 store
+            const aStore = useAssessStore()
+            aStore.evaluation = res.evaluation
+            return
+          }
+        } catch {
+          // 单次失败忽略,继续轮询
+        }
+      }
+    } finally {
+      evaluating.value = false
+    }
+  }
+
   watch([mastery, path, reasoning, evaluation, isMock, isSubmitted], () => {
     savePersisted({
       mastery: mastery.value,
@@ -155,9 +182,9 @@ export const useDiagnoseStore = defineStore('diagnose', () => {
   }, { deep: true })
 
   return {
-    questions, answers, mastery, path, reasoning, evaluation,
+    questions, answers, mastery, path, reasoning, evaluation, evaluating,
     isMock, isSubmitted, isLoading, isDiagnosed,
-    fetchQuestions, setAnswer, startTimer, submitDiagnose, reset,
+    fetchQuestions, setAnswer, startTimer, submitDiagnose, reset, pollEvaluation,
   }
 })
 
@@ -171,6 +198,17 @@ export const usePathStore = defineStore('path', () => {
     const res = await api.getPath(studentId)
     pathData.value = res.path
     isMock.value = res.mock
+    // 后端 GET /path 现在还会返回 evaluation/reasoning,刷新进路径页能恢复评价
+    if (res.evaluation !== undefined) {
+      const dStore = useDiagnoseStore()
+      const aStore = useAssessStore()
+      dStore.evaluation = res.evaluation || null
+      aStore.evaluation = res.evaluation || null
+      if (res.reasoning) {
+        dStore.reasoning = res.reasoning
+        aStore.reasoning = res.reasoning
+      }
+    }
     return res
   }
 
@@ -183,6 +221,11 @@ export const usePathStore = defineStore('path', () => {
   function setPath(data: PathItem[]) {
     pathData.value = data
   }
+
+  // 让 pathData 也参与持久化(原本只有 diagnoseStore.path 写)
+  watch(pathData, () => {
+    savePersisted({ path: pathData.value, isMock: isMock.value })
+  }, { deep: true })
 
   return { pathData, concepts, isMock, isPathGenerated, fetchPath, fetchConcepts, setPath }
 })
@@ -214,6 +257,13 @@ export const useLearnStore = defineStore('learn', () => {
       isMock.value = res.mock
       showAdjustment.value = true
       adjustmentReason.value = res.reasoning.join('\n')
+      // 后端 InteractionResponse 现在带 evaluation,同步到 diagnose/assess 让评价卡刷新
+      if (res.evaluation !== undefined) {
+        const dStore = useDiagnoseStore()
+        const aStore = useAssessStore()
+        dStore.evaluation = res.evaluation || null
+        aStore.evaluation = res.evaluation || null
+      }
       return res
     } finally {
       isLoading.value = false

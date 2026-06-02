@@ -146,6 +146,10 @@
       </div>
 
       <EvaluationCard v-if="diagnoseStore.evaluation" :evaluation="diagnoseStore.evaluation" />
+      <div v-else-if="diagnoseStore.evaluating" class="card eval-pending">
+        <el-icon class="rotate" color="#409eff"><Loading /></el-icon>
+        <span>📊 路径质量评分正在后台计算，稍候自动显示…</span>
+      </div>
 
       <div class="card">
         <div class="card-title">详细知识点掌握度</div>
@@ -172,7 +176,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
@@ -189,6 +193,7 @@ const studentStore = useStudentStore()
 
 const currentIndex = ref(0)
 const radarRef = ref<HTMLElement>()
+let radarChart: echarts.ECharts | null = null
 const qCount = ref(5)
 const loading = ref(false)
 
@@ -198,18 +203,18 @@ const elapsed = ref(0)
 let stageTimer: ReturnType<typeof setInterval> | null = null
 let elapsedTimer: ReturnType<typeof setInterval> | null = null
 
+// 评价 Agent 已拆为后台异步,主流程只剩诊断->检索->规划三阶段
 const loadingStages = [
   { short: '诊断', title: '🤖 诊断 Agent 分析中…', desc: '基于答卷量化每个知识点掌握度' },
   { short: '检索', title: '🔍 RAG 检索资源…', desc: 'bge-m3 向量召回候选学习资源' },
   { short: '规划', title: '🗺️ 规划 Agent 编排路径…', desc: '结合先修关系与时间预算生成路径' },
-  { short: '评价', title: '📊 评价 Agent 打分…', desc: '五维客观评分:针对性/顺序/可行性/个性化/资源' },
 ]
 
 function startLoadingTimers() {
   loadingStage.value = 0
   elapsed.value = 0
-  // 阶段切换:大致按经验耗时切(诊断 8s, 检索 2s, 规划 12s, 评价 直到结束)
-  const breaks = [8, 10, 22] // 累计秒数
+  // 阶段切换:诊断 ~8s -> 检索 ~2s -> 规划 直到结束(评价已移到后台)
+  const breaks = [8, 10] // 累计秒数
   const t0 = Date.now()
   elapsedTimer = setInterval(() => {
     elapsed.value = Math.round((Date.now() - t0) / 1000)
@@ -218,8 +223,7 @@ function startLoadingTimers() {
     const sec = (Date.now() - t0) / 1000
     if (sec < breaks[0]) loadingStage.value = 0
     else if (sec < breaks[1]) loadingStage.value = 1
-    else if (sec < breaks[2]) loadingStage.value = 2
-    else loadingStage.value = 3
+    else loadingStage.value = 2
   }, 500)
 }
 
@@ -334,6 +338,8 @@ async function submitDiagnose() {
     ElMessage.success('诊断完成！')
     await nextTick()
     renderRadar()
+    // 评分后台异步生成,前端轮询拉取(不 await,不阻塞页面)
+    diagnoseStore.pollEvaluation(sid)
   } catch {
     // ECONNABORTED / 网络错误:api 拦截器已弹 message,这里不重复
   } finally {
@@ -368,7 +374,13 @@ function masteryLabel(v: number) {
 
 function renderRadar() {
   if (!radarRef.value) return
-  const chart = echarts.init(radarRef.value)
+  // 复用 chart 实例,避免泄漏:有就 clear+setOption,没有才 init
+  if (!radarChart) {
+    radarChart = echarts.init(radarRef.value)
+  } else {
+    radarChart.clear()
+  }
+  const chart = radarChart
   const mastery = diagnoseStore.mastery
   const categories: Record<string, number[]> = { '算术': [], '代数': [], '几何': [], '数据分析': [] }
   for (const [k, v] of Object.entries(mastery)) {
@@ -433,6 +445,17 @@ onMounted(async () => {
 
 watch(() => diagnoseStore.isSubmitted, (val) => {
   if (val) nextTick(() => renderRadar())
+})
+
+function onResize() { radarChart?.resize() }
+
+onMounted(() => window.addEventListener('resize', onResize))
+
+onUnmounted(() => {
+  window.removeEventListener('resize', onResize)
+  radarChart?.dispose()
+  radarChart = null
+  stopLoadingTimers() // F5: 卸载时清 timer
 })
 </script>
 
@@ -615,6 +638,15 @@ watch(() => diagnoseStore.isSubmitted, (val) => {
 }
 @keyframes spin {
   100% { transform: rotate(360deg); }
+}
+.eval-pending {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #606266;
+  font-size: 13px;
+  background: #ecf5ff;
+  border: 1px solid #d9ecff;
 }
 .diagnose-loading-mask {
   position: fixed;

@@ -86,7 +86,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import * as echarts from 'echarts'
 import { useAssessStore, usePathStore } from '@/stores'
 import EvaluationCard from '@/components/EvaluationCard.vue'
@@ -94,6 +94,7 @@ import EvaluationCard from '@/components/EvaluationCard.vue'
 const assessStore = useAssessStore()
 const pathStore = usePathStore()
 const masteryChartRef = ref<HTMLElement>()
+let masteryChart: echarts.ECharts | null = null
 
 const weakCount = computed(() => Object.values(assessStore.mastery).filter(v => v < 0.3).length)
 const masteredCount = computed(() => Object.values(assessStore.mastery).filter(v => v >= 0.7).length)
@@ -129,7 +130,12 @@ function stripPrefix(r: string): string {
 
 function renderMasteryChart() {
   if (!masteryChartRef.value) return
-  const chart = echarts.init(masteryChartRef.value)
+  if (!masteryChart) {
+    masteryChart = echarts.init(masteryChartRef.value)
+  } else {
+    masteryChart.clear()
+  }
+  const chart = masteryChart
   // 已诊断的(按掌握度升序) + 未涉及的(灰色,放最末)
   const tested = Object.entries(assessStore.mastery).sort((a, b) => a[1] - b[1])
   const testedKeys = new Set(tested.map(([k]) => k))
@@ -203,6 +209,14 @@ onMounted(async () => {
 watch(() => assessStore.mastery, () => {
   if (assessStore.isLoaded) nextTick(() => renderMasteryChart())
 }, { deep: true })
+
+function onResize() { masteryChart?.resize() }
+onMounted(() => window.addEventListener('resize', onResize))
+onUnmounted(() => {
+  window.removeEventListener('resize', onResize)
+  masteryChart?.dispose()
+  masteryChart = null
+})
 </script>
 
 <style scoped>

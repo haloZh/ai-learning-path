@@ -10,6 +10,7 @@
     <template v-else>
       <div class="card status-bar">
         <el-tabs v-model="activeView" style="flex:1">
+          <el-tab-pane label="🎯 闯关路线" name="roadmap" />
           <el-tab-pane label="📋 路径列表" name="timeline" />
           <el-tab-pane label="🕸 知识图谱" name="graph" />
         </el-tabs>
@@ -19,7 +20,54 @@
         </div>
       </div>
 
-      <EvaluationCard v-if="diagnoseStore.evaluation" :evaluation="diagnoseStore.evaluation" />
+      <!-- 闯关路线图:节点串成路径,直观展示学习程度 -->
+      <div v-if="activeView === 'roadmap'">
+        <div class="card roadmap-progress">
+          <div class="rp-head">
+            <span class="rp-title">学习进度</span>
+            <span class="rp-count">{{ completedCount }} / {{ pathStore.pathData.length }} 项 ({{ progressPercent }}%)</span>
+          </div>
+          <el-progress
+            :percentage="progressPercent"
+            :stroke-width="16"
+            :status="progressPercent === 100 ? 'success' : ''"
+          />
+          <div class="rp-meta">
+            <span>✅ 已完成 {{ completedCount }} 项</span>
+            <span>⏱ 累计学习 {{ learnedMinutes }} 分钟</span>
+            <span>📍 剩余 {{ pathStore.pathData.length - completedCount }} 项</span>
+          </div>
+        </div>
+
+        <div class="card roadmap-card">
+          <div class="card-title">🎯 闯关路线（点击节点开始学习）</div>
+          <div class="roadmap">
+            <div
+              v-for="(item, idx) in pathStore.pathData" :key="idx"
+              class="rm-node"
+              :class="nodeStatus(idx)"
+              @click="goToLearn(idx)"
+            >
+              <div class="rm-connector" v-if="idx > 0" :class="{ done: isDone(idx - 1) }"></div>
+              <div class="rm-circle">
+                <span v-if="isDone(idx)" class="rm-icon">✓</span>
+                <span v-else-if="nodeStatus(idx) === 'current'" class="rm-icon">▶</span>
+                <span v-else>{{ idx + 1 }}</span>
+              </div>
+              <div class="rm-body">
+                <div class="rm-title">{{ item.title }}</div>
+                <div class="rm-sub">
+                  <el-tag size="small" :type="statusTagType(idx)" effect="plain">{{ statusLabel(idx) }}</el-tag>
+                  <span class="rm-concept">🏷 {{ item.concept_id }}</span>
+                  <span class="rm-min">⏱ {{ item.estimated_minutes }}分钟</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <EvaluationCard v-if="diagnoseStore.evaluation && activeView !== 'roadmap'" :evaluation="diagnoseStore.evaluation" />
 
       <div v-if="activeView === 'timeline'">
         <div class="card timeline-card">
@@ -79,7 +127,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { usePathStore, useStudentStore, useDiagnoseStore, useLearnStore } from '@/stores'
@@ -98,8 +146,9 @@ function goToLearn(idx: number) {
   learnStore.setInitialIdx(idx)
   router.push('/learn')
 }
-const activeView = ref('timeline')
+const activeView = ref('roadmap')
 const graphRef = ref<HTMLElement>()
+let graphChart: echarts.ECharts | null = null
 
 const totalMinutes = computed(() => pathStore.pathData.reduce((s, i) => s + (i.estimated_minutes || 0), 0))
 const avgMinutes = computed(() => {
@@ -108,9 +157,49 @@ const avgMinutes = computed(() => {
   return Math.round(totalMinutes.value / n)
 })
 
+// ===== 闯关路线进度(依据学习工作台的完成标记) =====
+const itemKey = (i: number) => {
+  const it = pathStore.pathData[i]
+  return it ? `${it.concept_id}::${it.title}` : ''
+}
+function isDone(idx: number): boolean {
+  return learnStore.isCompleted(itemKey(idx))
+}
+const completedCount = computed(() =>
+  pathStore.pathData.filter((_, i) => isDone(i)).length
+)
+const progressPercent = computed(() => {
+  const n = pathStore.pathData.length
+  return n ? Math.round((completedCount.value / n) * 100) : 0
+})
+const learnedMinutes = computed(() =>
+  pathStore.pathData.reduce((s, it, i) => s + (isDone(i) ? (it.estimated_minutes || 0) : 0), 0)
+)
+// 当前节点 = 第一个未完成的节点
+const currentNodeIdx = computed(() => {
+  const idx = pathStore.pathData.findIndex((_, i) => !isDone(i))
+  return idx === -1 ? -1 : idx // -1 表示全部完成
+})
+function nodeStatus(idx: number): 'done' | 'current' | 'todo' {
+  if (isDone(idx)) return 'done'
+  if (idx === currentNodeIdx.value) return 'current'
+  return 'todo'
+}
+function statusLabel(idx: number): string {
+  return { done: '已完成', current: '学习中', todo: '未开始' }[nodeStatus(idx)]
+}
+function statusTagType(idx: number): 'success' | 'warning' | 'info' {
+  return ({ done: 'success', current: 'warning', todo: 'info' } as const)[nodeStatus(idx)]
+}
+
 function renderGraph() {
   if (!graphRef.value) return
-  const chart = echarts.init(graphRef.value)
+  if (!graphChart) {
+    graphChart = echarts.init(graphRef.value)
+  } else {
+    graphChart.clear()
+  }
+  const chart = graphChart
   const concepts = pathStore.concepts
   const mastery = diagnoseStore.mastery
 
@@ -205,9 +294,139 @@ onMounted(async () => {
 watch(activeView, (v) => {
   if (v === 'graph') nextTick(() => renderGraph())
 })
+
+function onResize() { graphChart?.resize() }
+onMounted(() => window.addEventListener('resize', onResize))
+onUnmounted(() => {
+  window.removeEventListener('resize', onResize)
+  graphChart?.dispose()
+  graphChart = null
+})
 </script>
 
 <style scoped>
+/* ===== 闯关路线图 ===== */
+.roadmap-progress {
+  padding: 18px 24px;
+}
+.rp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.rp-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+}
+.rp-count {
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: #409eff;
+}
+.rp-meta {
+  display: flex;
+  gap: 24px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: #606266;
+}
+.roadmap-card {
+  padding: 20px 28px;
+}
+.roadmap {
+  display: flex;
+  flex-direction: column;
+}
+.rm-node {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 0;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+.rm-node:hover {
+  transform: translateX(4px);
+}
+/* 节点之间的连接线 */
+.rm-connector {
+  position: absolute;
+  left: 21px;
+  top: -16px;
+  width: 2px;
+  height: 24px;
+  background: #e4e7ed;
+}
+.rm-connector.done {
+  background: #67c23a;
+}
+.rm-circle {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  border: 2px solid #dcdfe6;
+  background: #fff;
+  color: #909399;
+  z-index: 1;
+  transition: all 0.3s;
+}
+.rm-node.done .rm-circle {
+  background: #67c23a;
+  border-color: #67c23a;
+  color: #fff;
+}
+.rm-node.current .rm-circle {
+  background: #409eff;
+  border-color: #409eff;
+  color: #fff;
+  animation: rm-pulse 1.4s ease-in-out infinite;
+}
+.rm-node.todo .rm-circle {
+  background: #fff;
+  border-color: #dcdfe6;
+  color: #c0c4cc;
+}
+@keyframes rm-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(64, 158, 255, 0.45); }
+  50% { box-shadow: 0 0 0 8px rgba(64, 158, 255, 0); }
+}
+.rm-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+.rm-body {
+  flex: 1;
+}
+.rm-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+}
+.rm-node.todo .rm-title {
+  color: #909399;
+}
+.rm-node.done .rm-title {
+  color: #67c23a;
+}
+.rm-sub {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #909399;
+}
+
 .status-bar {
   display: flex;
   align-items: center;

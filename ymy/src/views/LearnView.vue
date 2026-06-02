@@ -136,7 +136,8 @@
                 <span>新增项: <b style="color:#67c23a">{{ adjustmentDelta.added }}</b></span>
                 <span>删除项: <b style="color:#f56c6c">{{ adjustmentDelta.removed }}</b></span>
               </div>
-              <div class="adjustment-text" v-html="formattedAdjustment"></div>
+              <!-- 用纯文本 + pre-wrap 渲染 LLM 输出,避免 XSS -->
+              <div class="adjustment-text">{{ learnStore.adjustmentReason }}</div>
               <div style="margin-top:12px;display:flex;gap:8px">
                 <el-button type="success" size="small" @click="acceptAdjustment">✓ 接受调整</el-button>
                 <el-button size="small" @click="rejectAdjustment">✗ 保留旧路径</el-button>
@@ -175,7 +176,6 @@ const currentItem = computed(() => learnStore.currentPath[currentIdx.value])
 const itemKey = (it: PathItem) => `${it.concept_id}::${it.title}`
 
 const oldPathKeys = ref<Set<string>>(new Set())
-const formattedAdjustment = computed(() => learnStore.adjustmentReason.replace(/\n/g, '<br>'))
 
 const completedCount = computed(() =>
   learnStore.currentPath.filter(it => learnStore.isCompleted(itemKey(it))).length
@@ -189,8 +189,8 @@ const isCurrentCompleted = computed(() =>
   currentItem.value ? learnStore.isCompleted(itemKey(currentItem.value)) : false
 )
 
-// 资源 url:目前 PathItem 没带 url,占位
-const resourceUrl = computed<string | null>(() => null)
+// 资源 url:plan_node 在路径项里回填了 resource_url(从 RAG 候选反查)
+const resourceUrl = computed<string | null>(() => currentItem.value?.resource_url ?? null)
 
 const adjustmentDelta = computed(() => {
   let added = 0, removed = 0
@@ -469,6 +469,8 @@ onMounted(() => {
   color: #606266;
   max-height: 200px;
   overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .rotate {
   animation: spin 1s linear infinite;
