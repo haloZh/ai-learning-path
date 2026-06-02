@@ -31,8 +31,18 @@ def _client() -> OpenAI | None:
     return OpenAI(api_key=ARK_API_KEY, base_url=ARK_BASE_URL, timeout=_TIMEOUT_SECONDS)
 
 
-def chat_json(system: str, user: str, *, retries: int = 1) -> dict[str, Any]:
-    """调 LLM 返回 JSON dict。失败抛 LLMUnavailable,由 caller 兜底。"""
+def chat_json(
+    system: str,
+    user: str,
+    *,
+    retries: int = 1,
+    max_tokens: int | None = None,
+) -> dict[str, Any]:
+    """调 LLM 返回 JSON dict。失败抛 LLMUnavailable,由 caller 兜底。
+
+    max_tokens: 限制输出长度。LLM 耗时主要随输出 token 数线性增长,
+    给生成类节点(plan/evaluate)设上限可显著降低响应时间。
+    """
     client = _client()
     if client is None:
         raise LLMUnavailable("ARK_API_KEY 未配置")
@@ -40,15 +50,18 @@ def chat_json(system: str, user: str, *, retries: int = 1) -> dict[str, Any]:
     last_err: Exception | None = None
     for attempt in range(retries + 1):
         try:
-            resp = client.chat.completions.create(
-                model=ARK_MODEL,
-                messages=[
+            kwargs: dict[str, Any] = {
+                "model": ARK_MODEL,
+                "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                response_format={"type": "json_object"},
-                temperature=0.3,
-            )
+                "response_format": {"type": "json_object"},
+                "temperature": 0.3,
+            }
+            if max_tokens:
+                kwargs["max_tokens"] = max_tokens
+            resp = client.chat.completions.create(**kwargs)
             content = resp.choices[0].message.content or ""
             return json.loads(content)
         except (APITimeoutError, APIError) as e:

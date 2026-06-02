@@ -268,6 +268,7 @@ def plan_node(state: AgentState) -> AgentState:
             result = chat_json(
                 prompts.PLAN_SYSTEM,
                 prompts.plan_user(profile, mastery, resource_pool, prerequisites),
+                max_tokens=900,
             )
         raw_path = result.get("path", [])
         if not isinstance(raw_path, list):
@@ -286,16 +287,23 @@ def plan_node(state: AgentState) -> AgentState:
                 mins = int(_clip(int(p.get("estimated_minutes", 30)), 5, 120))
             except (TypeError, ValueError):
                 mins = 30
+            title = str(p.get("title", "")).strip() or f"知识点 {cid} 学习"
+            url, rtype = _lookup_resource(resource_pool, cid, title)
             path.append({
                 "concept_id": cid,
-                "title": str(p.get("title", "")).strip() or f"知识点 {cid} 学习",
+                "title": title,
                 "estimated_minutes": mins,
                 "reason": str(p.get("reason", "")).strip(),
+                "resource_url": url,
+                "resource_type": rtype,
             })
         if not path:
             raise LLMUnavailable("LLM 返回 path 为空或全部无效")
         if dropped:
             reasoning.append(f"[plan] 已丢弃 {dropped} 个无效 concept 项")
+        hit = sum(1 for p in path if p.get("resource_url"))
+        if hit:
+            reasoning.append(f"[plan] 路径项 {hit}/{len(path)} 命中真实资源链接")
         reasoning.append(f"[plan] LLM: {result.get('summary', '').strip()}")
     except (LLMUnavailable, KeyError, TypeError, ValueError) as e:
         logger.info("plan fallback to mock: %s", e)
@@ -310,6 +318,47 @@ def plan_node(state: AgentState) -> AgentState:
         "reasoning": reasoning,
         "used_mock": used_mock,
     }
+
+
+def _lookup_resource(
+    resource_pool: dict[str, list[dict]], concept_id: str, title: str
+) -> tuple[str | None, str | None]:
+    """用 LLM 输出的 title 在 resource_pool 中反查匹配的资源 url/type。
+
+    匹配优先级:① title 精确相等 ② title 互相包含 ③ 同 concept 取首条作兜底。
+    返回 (url|None, type|None)。
+    """
+    items = resource_pool.get(concept_id) or []
+    if not items:
+        return None, None
+    norm_title = title.strip()
+    # 精确
+    for it in items:
+        if (it.get("title") or "").strip() == norm_title:
+            return _safe_url(it.get("url")), _safe_str(it.get("type"))
+    # 包含
+    for it in items:
+        t = (it.get("title") or "").strip()
+        if t and (t in norm_title or norm_title in t):
+            return _safe_url(it.get("url")), _safe_str(it.get("type"))
+    # 兜底取首条
+    first = items[0]
+    return _safe_url(first.get("url")), _safe_str(first.get("type"))
+
+
+def _safe_url(u) -> str | None:
+    s = (u or "").strip()
+    # 排除明显占位 / 非合法 url
+    if not s or s in {"https://www.bilibili.com/xxx"}:
+        return None
+    if not (s.startswith("http://") or s.startswith("https://")):
+        return None
+    return s
+
+
+def _safe_str(s) -> str | None:
+    s = (s or "").strip()
+    return s or None
 
 
 def evaluate_node(state: AgentState) -> AgentState:
@@ -330,6 +379,7 @@ def evaluate_node(state: AgentState) -> AgentState:
             result = chat_json(
                 prompts.EVALUATE_SYSTEM,
                 prompts.evaluate_user(profile, mastery, path, resource_pool),
+                max_tokens=700,
             )
         score = int(_clip(int(result.get("score", 0)), 0, 100))
         raw_scores = result.get("scores", {})
@@ -371,11 +421,20 @@ def optimize_node(state: AgentState) -> AgentState:
     used_mock = state.get("used_mock", False)
     valid_codes = _get_valid_codes()
 
+    # 用旧 path 的 (concept_id, title) → (url, type) 做一个查找表,
+    # 让 optimize LLM 重写后的同名项继承资源链接,而不是丢失
+    legacy_map: dict[tuple[str, str], tuple[str | None, str | None]] = {}
+    for p in current_path:
+        legacy_map[(p.get("concept_id", ""), p.get("title", ""))] = (
+            p.get("resource_url"), p.get("resource_type"),
+        )
+
     try:
         with _timer("optimize.llm"):
             result = chat_json(
                 prompts.OPTIMIZE_SYSTEM,
                 prompts.optimize_user(current_path, interaction),
+                max_tokens=900,
             )
         raw_path = result.get("path", [])
         if not isinstance(raw_path, list):
@@ -394,11 +453,15 @@ def optimize_node(state: AgentState) -> AgentState:
                 mins = int(_clip(int(p.get("estimated_minutes", 30)), 5, 120))
             except (TypeError, ValueError):
                 mins = 30
+            title = str(p.get("title", "")).strip() or f"知识点 {cid} 学习"
+            url, rtype = legacy_map.get((cid, title), (None, None))
             path.append({
                 "concept_id": cid,
-                "title": str(p.get("title", "")).strip() or f"知识点 {cid} 学习",
+                "title": title,
                 "estimated_minutes": mins,
                 "reason": str(p.get("reason", "")).strip(),
+                "resource_url": url,
+                "resource_type": rtype,
             })
         if not path:
             raise LLMUnavailable("LLM 返回 path 为空或全部无效")

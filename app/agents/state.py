@@ -8,11 +8,14 @@ class Answer(TypedDict):
     seconds: int
 
 
-class PathItem(TypedDict):
+class PathItem(TypedDict, total=False):
     concept_id: str
     title: str
     estimated_minutes: int
     reason: str
+    # 可选资源附件(由 plan_node 用 title 在 resource_pool 中反查回填)
+    resource_url: str | None
+    resource_type: str | None
 
 
 class AgentState(TypedDict, total=False):

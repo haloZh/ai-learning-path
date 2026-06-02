@@ -82,6 +82,9 @@ class PathItemOut(BaseModel):
     title: str
     estimated_minutes: int
     reason: str
+    # 资源附件:plan_node 用 title 反查 resource_pool 回填,无则为 None
+    resource_url: str | None = None
+    resource_type: str | None = Field(default=None, description="video/article/exercise 等")
 
 
 class EvaluationScores(BaseModel):
@@ -113,6 +116,8 @@ class DiagnoseResponse(BaseModel):
 class LearningPathResponse(BaseModel):
     student_id: int
     path: list[PathItemOut]
+    reasoning: list[str] = Field(default_factory=list)
+    evaluation: EvaluationOut | None = None
     mock: bool = False
 
 
@@ -127,4 +132,5 @@ class InteractionResponse(BaseModel):
     student_id: int
     path: list[PathItemOut]
     reasoning: list[str]
+    evaluation: EvaluationOut | None = None
     mock: bool = False

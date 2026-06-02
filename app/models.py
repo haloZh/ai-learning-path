@@ -1,9 +1,15 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
+
+
+def _utcnow() -> datetime:
+    """timezone-aware UTC now,确保 SQLAlchemy 序列化时带 tz,
+    前端 new Date(s) 才能正确反算成本地时间。"""
+    return datetime.now(timezone.utc)
 
 
 class Student(Base):
@@ -17,9 +23,9 @@ class Student(Base):
     available_minutes_per_day: Mapped[int] = mapped_column(Integer, nullable=False)
     learning_style: Mapped[str] = mapped_column(String(20), nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=_utcnow, onupdate=_utcnow
     )
 
 
@@ -89,7 +95,7 @@ class Interaction(Base):
     event: Mapped[str] = mapped_column(String(20), nullable=False)
     concept_code: Mapped[str] = mapped_column(String(80), nullable=False)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
 
     student: Mapped["Student"] = relationship()
 
@@ -106,7 +112,7 @@ class MasterySnapshot(Base):
     mastery: Mapped[dict] = mapped_column(JSON, default=dict)
     reasoning: Mapped[list] = mapped_column(JSON, default=list)
     is_mock: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
 
     student: Mapped["Student"] = relationship()
 
@@ -128,7 +134,7 @@ class PlanEvaluation(Base):
     improvements: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_mock: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
 
     student: Mapped["Student"] = relationship()
 
@@ -148,9 +154,9 @@ class LearningPath(Base):
     path: Mapped[list] = mapped_column(JSON, default=list)
     reasoning: Mapped[list] = mapped_column(JSON, default=list)
     is_mock: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=_utcnow, onupdate=_utcnow
     )
 
     student: Mapped["Student"] = relationship()

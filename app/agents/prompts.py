@@ -58,11 +58,20 @@ def plan_user(
     weak_first = sorted(mastery.items(), key=lambda kv: kv[1])[:8]
     mastery_trim = {k: v for k, v in weak_first}
     weak_codes = set(mastery_trim.keys())
-    # prerequisites 也只保留涉及 weak 的
-    pre_trim = (
-        {k: v for k, v in prerequisites.items() if k in weak_codes}
-        if prerequisites else None
-    )
+    # prerequisites 必须保留闭包:weak ∪ "weak 的所有先修(可能掌握度高,但仍是必要前置)"
+    # 否则 LLM 看不到"一元一次方程是一元二次方程的先修"这种关键边,排序会失序
+    pre_trim = None
+    if prerequisites:
+        # 简单 BFS 求闭包:把 weak 涉及的所有上游(传递闭包)收齐
+        relevant = set(weak_codes)
+        frontier = list(weak_codes)
+        while frontier:
+            cur = frontier.pop()
+            for upstream in prerequisites.get(cur, []) or []:
+                if upstream not in relevant:
+                    relevant.add(upstream)
+                    frontier.append(upstream)
+        pre_trim = {k: v for k, v in prerequisites.items() if k in relevant}
     # resource_pool 每 concept 最多 2 条,避免 token 膨胀
     pool_trim = None
     if resource_pool:
