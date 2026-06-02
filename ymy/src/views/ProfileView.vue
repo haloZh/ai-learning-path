@@ -163,6 +163,8 @@ const goalOptions = [
   '半年内系统补强管综数学',
   '冲刺阶段精准补强薄弱点',
   '突破管综数学及格线',
+  'AI 作业',
+  '人工智能作业',
 ]
 
 const levelMap: Record<string, string> = { beginner: '初级（离校多年）', intermediate: '中级（有基础）', advanced: '高级（系统学过）' }
