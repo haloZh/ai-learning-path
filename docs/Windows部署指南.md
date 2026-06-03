@@ -174,9 +174,11 @@ python -m scripts.init_rag
 
 ## 8. 第七步：构建前端
 
+> 当前活跃前端是 `ymy/`（Element Plus + TypeScript），后端会优先托管 `ymy/dist`。
+
 ```powershell
 # 进入前端目录
-cd frontend
+cd ymy
 
 # 安装依赖
 npm install
@@ -188,7 +190,8 @@ npm run build
 cd ..
 ```
 
-构建产物在 `frontend/dist/`，已配置 FastAPI 自动托管，无需额外部署。
+构建产物在 `ymy/dist/`，已配置 FastAPI 自动托管（单服务模式），无需额外部署。
+如需前端热更新开发，另开终端在 `ymy/` 下执行 `npm run dev`（端口 5174，自动代理 /api 到 8000）。
 
 ---
 

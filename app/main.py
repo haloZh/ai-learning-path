@@ -26,7 +26,25 @@ logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _WEB_DIR = _PROJECT_ROOT / "web"
-_DIST_DIR = _PROJECT_ROOT / "frontend" / "dist"
+
+
+def _resolve_dist() -> Path:
+    """选择前端构建产物目录。
+
+    优先 ymy/dist(当前活跃前端),回退 frontend/dist(旧版),
+    可用环境变量 FRONTEND_DIST 覆盖。单服务部署时由 FastAPI 托管该目录。
+    """
+    import os
+    env = os.getenv("FRONTEND_DIST")
+    if env:
+        return Path(env)
+    ymy = _PROJECT_ROOT / "ymy" / "dist"
+    if ymy.exists():
+        return ymy
+    return _PROJECT_ROOT / "frontend" / "dist"
+
+
+_DIST_DIR = _resolve_dist()
 
 _DIAGNOSE_GRAPH = build_diagnose_graph()
 _EVALUATE_GRAPH = build_evaluate_graph()
@@ -129,6 +147,17 @@ def _spa_index() -> FileResponse:
 @app.get("/", include_in_schema=False)
 def index():
     return _spa_index()
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    """单服务部署时托管前端图标(dist 根目录,不在 /assets 下)。"""
+    for name in ("favicon.svg", "favicon.ico"):
+        f = _DIST_DIR / name
+        if f.exists():
+            return FileResponse(f)
+    raise HTTPException(status_code=404, detail="no favicon")
 
 
 @app.get("/health")
