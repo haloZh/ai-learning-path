@@ -1,0 +1,35 @@
+# systemd 服务单元 — 让后端常驻 + 开机自启 + 崩溃自动重启
+#
+# 安装步骤:
+#   1) 按实际路径/用户改下面的 User、WorkingDirectory、ExecStart
+#   2) sudo cp deploy/learning-path.service /etc/systemd/system/
+#   3) sudo systemctl daemon-reload
+#   4) sudo systemctl enable --now learning-path
+#   5) 查看状态/日志:
+#        systemctl status learning-path
+#        journalctl -u learning-path -f
+#
+# 注意:--host 0.0.0.0 才能从外部访问(127.0.0.1 只能本机)
+
+[Unit]
+Description=AI Learning Path System (FastAPI + LangGraph + Qwen3-8B)
+After=network.target
+
+[Service]
+Type=simple
+# 改成实际运行用户(如 ai4rec 或 ubuntu)
+User=ubuntu
+# 改成实际项目绝对路径
+WorkingDirectory=/home/ubuntu/ai-learning-path
+# venv 内的 python,绝对路径
+ExecStart=/home/ubuntu/ai-learning-path/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+# 加载 .env(systemd 不自动读 .env,但项目内 config.py 用 python-dotenv 会读;
+# 这里再显式指定一次更稳妥,可选)
+EnvironmentFile=-/home/ubuntu/ai-learning-path/.env
+# bge-m3 模型下载加速(国内)
+Environment=HF_ENDPOINT=https://hf-mirror.com
+
+[Install]
+WantedBy=multi-user.target
