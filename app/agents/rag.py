@@ -25,7 +25,9 @@ os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
 logger = logging.getLogger(__name__)
 
-_MODEL_NAME = "BAAI/bge-m3"
+# 模型来源:优先用本地路径(离线部署时把 bge-m3 放某目录,配 EMBEDDING_MODEL_PATH),
+# 否则用 HF 名称从缓存加载。本地路径避免依赖 HF 缓存的符号链接结构(跨平台传输友好)。
+_MODEL_NAME = os.getenv("EMBEDDING_MODEL_PATH") or os.getenv("EMBEDDING_MODEL") or "BAAI/bge-m3"
 _COLLECTION_NAME = "resources"
 _PERSIST_DIR = Path(os.getenv("CHROMA_DIR", "./data/chroma"))
 
