@@ -25,30 +25,22 @@ jobs:
       - name: Download all dependencies as wheels
         run: |
           mkdir -p offline_wheels
-          # 下载 requirements 全部依赖(含传递依赖)为 wheel。
-          # 目标平台锁定服务器:manylinux x86_64 + cpython 3.12。
-          # torch 等默认会拉 CUDA 版(很大);本项目 bge-m3 用 CPU 即可,
-          # 显式指定 CPU 版 torch 源,大幅减小体积。
+          # GitHub runner 本身就是 Linux x86_64 + Python 3.12(与服务器一致),
+          # 所以直接原生 pip download 即可,无需 --platform 跨平台参数
+          # (那些严格匹配参数反而导致 No matching distribution 失败)。
+          # torch 走 CPU 版源(bge-m3 用 CPU 即可),大幅减小体积、避免拉 CUDA。
           pip download \
             --dest offline_wheels \
-            --only-binary=:all: \
-            --platform manylinux2014_x86_64 \
-            --python-version 3.12 \
-            --implementation cp \
+            --prefer-binary \
             --extra-index-url https://download.pytorch.org/whl/cpu \
             -r requirements.txt
-          echo "=== 下载的 wheel 数量 ==="
+          # 把 pip/setuptools/wheel 也下进去备用
+          pip download --dest offline_wheels --prefer-binary pip setuptools wheel
+          echo "=== 下载结果 ==="
           ls offline_wheels | wc -l
           du -sh offline_wheels
-
-      - name: Also include pip/setuptools/wheel themselves
-        run: |
-          # 服务器 venv 自带 pip,但保险起见把 pip/setuptools/wheel 也下进去
-          pip download --dest offline_wheels \
-            --only-binary=:all: \
-            --platform manylinux2014_x86_64 \
-            --python-version 3.12 --implementation cp \
-            pip setuptools wheel || true
+          echo "=== 非 wheel 文件(若有 .tar.gz 需注意服务器能否装)==="
+          ls offline_wheels | grep -v '\.whl$' || echo "(全是 wheel,很好)"
 
       - name: Generate offline install hint
         run: |
