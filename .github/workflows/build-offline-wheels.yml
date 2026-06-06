@@ -1,0 +1,69 @@
+name: Build Offline Wheels (Linux x86_64 / py3.12)
+
+# 用途:为无法联网的学院服务器(Ubuntu 24.04 / Python 3.12 / x86_64)
+# 离线准备全部 Python 依赖 wheel。在 GitHub 云端 Linux 下载好,打包成 artifact 供下载。
+# 触发:手动(Actions 页面点 Run workflow)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip wheel
+
+      - name: Download all dependencies as wheels
+        run: |
+          mkdir -p offline_wheels
+          # 下载 requirements 全部依赖(含传递依赖)为 wheel。
+          # 目标平台锁定服务器:manylinux x86_64 + cpython 3.12。
+          # torch 等默认会拉 CUDA 版(很大);本项目 bge-m3 用 CPU 即可,
+          # 显式指定 CPU 版 torch 源,大幅减小体积。
+          pip download \
+            --dest offline_wheels \
+            --only-binary=:all: \
+            --platform manylinux2014_x86_64 \
+            --python-version 3.12 \
+            --implementation cp \
+            --extra-index-url https://download.pytorch.org/whl/cpu \
+            -r requirements.txt
+          echo "=== 下载的 wheel 数量 ==="
+          ls offline_wheels | wc -l
+          du -sh offline_wheels
+
+      - name: Also include pip/setuptools/wheel themselves
+        run: |
+          # 服务器 venv 自带 pip,但保险起见把 pip/setuptools/wheel 也下进去
+          pip download --dest offline_wheels \
+            --only-binary=:all: \
+            --platform manylinux2014_x86_64 \
+            --python-version 3.12 --implementation cp \
+            pip setuptools wheel || true
+
+      - name: Generate offline install hint
+        run: |
+          cat > offline_wheels/安装说明.txt <<'EOF'
+          离线依赖包 — Linux x86_64 / Python 3.12
+
+          在服务器上(已激活 venv)执行:
+            pip install --no-index --find-links=该目录 -r requirements.txt
+
+          若 requirements.txt 不在当前目录,用绝对路径指定 -r。
+          EOF
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-wheels-linux-py312
+          path: offline_wheels/
+          retention-days: 7
